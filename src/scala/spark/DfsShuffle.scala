@@ -3,6 +3,8 @@ package spark
 import java.io.{EOFException, ObjectInputStream, ObjectOutputStream}
 import java.net.URI
 import java.util.UUID
+import java.io._
+import java.util.concurrent._
 
 import scala.collection.mutable.HashMap
 
@@ -25,6 +27,7 @@ class DfsShuffle[K, V, C] extends Shuffle[K, V, C] with Logging {
   : RDD[(K, C)] =
   {
     val sc = input.sparkContext
+    logInfo("SPARK CONTEXT IS"+sc)
     val dir = DfsShuffle.newTempDirectory()
     logInfo("Intermediate data directory: " + dir)
 
@@ -33,52 +36,57 @@ class DfsShuffle[K, V, C] extends Shuffle[K, V, C] with Logging {
 
     // Run a parallel foreach to write the intermediate data files
     numberedSplitRdd.foreach((pair: (Int, Iterator[(K, V)])) => {
-      val myIndex = pair._1
-      val myIterator = pair._2
-      val buckets = Array.tabulate(numOutputSplits)(_ => new HashMap[K, C])
-      for ((k, v) <- myIterator) {
-        var bucketId = k.hashCode % numOutputSplits
-        if (bucketId < 0) { // Fix bucket ID if hash code was negative
-          bucketId += numOutputSplits
+        val myIndex = pair._1
+        val myIterator = pair._2
+        val buckets = Array.tabulate(numOutputSplits)(_ => new HashMap[K, C])
+        for ((k, v) <- myIterator) {
+          var bucketId = k.hashCode % numOutputSplits
+          if (bucketId < 0) { // Fix bucket ID if hash code was negative
+            bucketId += numOutputSplits
+          }
+          val bucket = buckets(bucketId)
+          bucket(k) = bucket.get(k) match {
+            case Some(c) => mergeValue(c, v)
+            case None => createCombiner(v)
+          }
         }
-        val bucket = buckets(bucketId)
-        bucket(k) = bucket.get(k) match {
-          case Some(c) => mergeValue(c, v)
-          case None => createCombiner(v)
+        val fs = DfsShuffle.getFileSystem()
+        for (i <- 0 until numOutputSplits) {
+          val path = new Path(dir, "%d-to-%d".format(myIndex, i))
+          val out = new ObjectOutputStream(fs.create(path, true))
+          buckets(i).foreach(pair => out.writeObject(pair))
+          out.close()
         }
-      }
-      val fs = DfsShuffle.getFileSystem()
-      for (i <- 0 until numOutputSplits) {
-        val path = new Path(dir, "%d-to-%d".format(myIndex, i))
-        val out = new ObjectOutputStream(fs.create(path, true))
-        buckets(i).foreach(pair => out.writeObject(pair))
-        out.close()
-      }
-    })
+      })
 
     // Return an RDD that does each of the merges for a given partition
     val indexes = sc.parallelize(0 until numOutputSplits, numOutputSplits)
     return indexes.flatMap((myIndex: Int) => {
-      val combiners = new HashMap[K, C]
-      val fs = DfsShuffle.getFileSystem()
-      for (i <- Utils.shuffle(0 until numInputSplits)) {
-        val path = new Path(dir, "%d-to-%d".format(i, myIndex))
-        val inputStream = new ObjectInputStream(fs.open(path))
-        try {
-          while (true) {
-            val (k, c) = inputStream.readObject().asInstanceOf[(K, C)]
-            combiners(k) = combiners.get(k) match {
-              case Some(oldC) => mergeCombiners(oldC, c)
-              case None => c
-            }
+        logInfo("IN DFS: loader= "+Thread.currentThread.getContextClassLoader)
+        logInfo("IN DFS: loader= "+currentThread.getContextClassLoader)
+        val combiners = new HashMap[K, C]
+        val fs = DfsShuffle.getFileSystem()
+        for (i <- Utils.shuffle(0 until numInputSplits)) {
+          val path = new Path(dir, "%d-to-%d".format(i, myIndex))
+          val inputStream = new ObjectInputStream(fs.open(path)) {
+            override def resolveClass(desc: ObjectStreamClass) =
+              Class.forName(desc.getName, false, currentThread.getContextClassLoader)
           }
-        } catch {
-          case e: EOFException => {}
+          try {
+            while (true) {
+              val (k, c) = inputStream.readObject().asInstanceOf[(K, C)]
+              combiners(k) = combiners.get(k) match {
+                case Some(oldC) => mergeCombiners(oldC, c)
+                case None => c
+              }
+            }
+          } catch {
+            case e: EOFException => {}
+          }
+          inputStream.close()
         }
-        inputStream.close()
-      }
-      combiners
-    })
+        combiners
+      })
   }
 }
 
