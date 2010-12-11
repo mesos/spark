@@ -19,13 +19,13 @@ object Utils {
     return bos.toByteArray
   }
 
-  def deserialize[T](bytes: Array[Byte]): T = {
+  def deserialize[T](bytes: Array[Byte]): T = this.synchronized {
     val bis = new ByteArrayInputStream(bytes)
     val ois = new ObjectInputStream(bis)
     return ois.readObject.asInstanceOf[T]
   }
 
-  def deserialize[T](bytes: Array[Byte], loader: ClassLoader): T = {
+  def deserialize[T](bytes: Array[Byte], loader: ClassLoader): T = this.synchronized {
     val bis = new ByteArrayInputStream(bytes)
     val ois = new ObjectInputStream(bis) {
       override def resolveClass(desc: ObjectStreamClass) =
