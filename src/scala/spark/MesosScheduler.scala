@@ -4,6 +4,7 @@ import java.io.{File, FileInputStream, FileOutputStream}
 import java.util.{ArrayList => JArrayList}
 import java.util.{List => JList}
 import java.util.{HashMap => JHashMap}
+import java.net.{URLClassLoader,URL}
 
 import scala.collection.mutable.ArrayBuffer
 import scala.collection.mutable.HashMap
@@ -52,6 +53,14 @@ extends MScheduler with spark.Scheduler with Logging
 
   // URIs of JARs to pass to executor
   var jarUris: String = ""
+
+  /**
+   * Custom class loader to deserialize the client classes.
+   * Loads all the jar files specified by the user from the tmp directory.
+   * @TODO: it means that some classes may be loaded from different class
+   * loaders => investigate if this is some expected behaviours.
+   */
+  var customClassLoader: URLClassLoader = null
 
   def newJobId(): Int = this.synchronized {
     val id = nextJobId
@@ -250,11 +259,14 @@ extends MScheduler with spark.Scheduler with Logging
     val jarDir = Utils.createTempDir()
     logInfo("Temp directory for JARs: " + jarDir)
     val filenames = ArrayBuffer[String]()
+    val local_urls = ArrayBuffer[URL]()
     // Copy each JAR to a unique filename in the jarDir
     for ((path, index) <- sc.jars.zipWithIndex) {
       val file = new File(path)
       val filename = index + "_" + file.getName
-      copyFile(file, new File(jarDir, filename))
+      val f = new File(jarDir, filename)
+      copyFile(file, f)
+      local_urls += f.toURI.toURL  // Recommended workaround
       filenames += filename
     }
     // Create the server
@@ -263,7 +275,9 @@ extends MScheduler with spark.Scheduler with Logging
     // Build up the jar URI list
     val serverUri = jarServer.uri
     jarUris = filenames.map(f => serverUri + "/" + f).mkString(",")
+    customClassLoader = new URLClassLoader(local_urls.toArray,this.getClass.getClassLoader)
     logInfo("JAR server started at " + serverUri)
+    logInfo("Using custom class loader")
   }
 
   // Copy a file on the local file system

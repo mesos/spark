@@ -215,7 +215,10 @@ extends Job(jobId) with Logging
       logInfo("Finished TID %d (progress: %d/%d)".format(
         tid, tasksFinished, numTasks))
       // Deserialize task result
-      val result = Utils.deserialize[TaskResult[T]](status.getData)
+      val result = if(sched.customClassLoader==null)
+        Utils.deserialize[TaskResult[T]](status.getData)
+      else
+        Utils.deserialize[TaskResult[T]](status.getData,sched.customClassLoader)
       results(index) = result.value
       // Update accumulators
       Accumulators.add(callingThread, result.accumUpdates)
