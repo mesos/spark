@@ -46,7 +46,6 @@ class Executor extends mesos.Executor with Logging {
         try {
           Accumulators.clear
           val task = Utils.deserialize[Task[Any]](arg, classLoader)
-          Thread.currentThread.setContextClassLoader(classLoader)
           val value = task.run
           val accumUpdates = Accumulators.values
           val result = new TaskResult(value, accumUpdates)

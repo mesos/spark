@@ -62,8 +62,6 @@ class DfsShuffle[K, V, C] extends Shuffle[K, V, C] with Logging {
     // Return an RDD that does each of the merges for a given partition
     val indexes = sc.parallelize(0 until numOutputSplits, numOutputSplits)
     return indexes.flatMap((myIndex: Int) => {
-        logInfo("IN DFS: loader= "+Thread.currentThread.getContextClassLoader)
-        logInfo("IN DFS: loader= "+currentThread.getContextClassLoader)
         val combiners = new HashMap[K, C]
         val fs = DfsShuffle.getFileSystem()
         for (i <- Utils.shuffle(0 until numInputSplits)) {
