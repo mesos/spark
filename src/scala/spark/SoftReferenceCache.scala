@@ -11,3 +11,13 @@ class SoftReferenceCache extends Cache {
   override def get(key: Any): Any = map.get(key)
   override def put(key: Any, value: Any) = map.put(key, value)
 }
+
+/**
+ * An implementation of cache that keeps everything.
+ */
+class FullRetentionCache extends Cache {
+  val map = new MapMaker().makeMap[Any, Any]()
+
+  override def get(key: Any): Any = map.get(key)
+  override def put(key: Any, value: Any) = map.put(key, value)
+}
