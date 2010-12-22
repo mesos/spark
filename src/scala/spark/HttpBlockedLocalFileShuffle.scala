@@ -194,22 +194,22 @@ extends Shuffle[K, V, C] with Logging {
 
     override def run: Unit = {
       try {
-        // First get the INDEX file if totalBlocksInSplit(inputId) is unknown
-        if (totalBlocksInSplit(inputId) == -1) {
+        // First get the INDEX file if totalBlocksInSplit(splitIndex) is unknown
+        if (totalBlocksInSplit(splitIndex) == -1) {
           val url = "%s/shuffle/%d/%d/INDEX-%d".format(serverUri, shuffleId, 
             inputId, myId)
           val inputStream = new ObjectInputStream(new URL(url).openStream())
           
           try {
             while (true) {
-              blocksInSplit(inputId) += 
+              blocksInSplit(splitIndex) += 
                 inputStream.readObject().asInstanceOf[Long]
             }
           } catch {
             case e: EOFException => {}
           }
           
-          totalBlocksInSplit(inputId) = blocksInSplit(inputId).size
+          totalBlocksInSplit(splitIndex) = blocksInSplit(splitIndex).size
           inputStream.close()
         }
           
@@ -220,11 +220,11 @@ extends Shuffle[K, V, C] with Logging {
           url.openConnection().asInstanceOf[HttpURLConnection]
         
         // Set the range to download
-        val blockStartsAt = hasBlocksInSplit(inputId) match {
+        val blockStartsAt = hasBlocksInSplit(splitIndex) match {
           case 0 => 0
-          case _ => blocksInSplit(inputId)(hasBlocksInSplit(inputId) - 1) + 1
+          case _ => blocksInSplit(splitIndex)(hasBlocksInSplit(splitIndex) - 1) + 1
         }
-        val blockEndsAt = blocksInSplit(inputId)(hasBlocksInSplit(inputId))
+        val blockEndsAt = blocksInSplit(splitIndex)(hasBlocksInSplit(splitIndex))
         httpConnection.setRequestProperty("Range", 
           "bytes=" + blockStartsAt + "-" + blockEndsAt)
         
@@ -261,10 +261,10 @@ extends Shuffle[K, V, C] with Logging {
         httpConnection.disconnect()
 
         // Reception completed. Update stats.
-        hasBlocksInSplit(inputId) = hasBlocksInSplit(inputId) + 1
+        hasBlocksInSplit(splitIndex) = hasBlocksInSplit(splitIndex) + 1
         
         // Split has been received only if all the blocks have been received
-        if (hasBlocksInSplit(inputId) == totalBlocksInSplit(inputId)) {
+        if (hasBlocksInSplit(splitIndex) == totalBlocksInSplit(splitIndex)) {
           hasSplitsBitVector.synchronized {
             hasSplitsBitVector.set(splitIndex)
           }

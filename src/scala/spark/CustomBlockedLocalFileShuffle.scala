@@ -201,12 +201,12 @@ extends Shuffle[K, V, C] with Logging {
     override def run: Unit = {
       try {
         // TODO: Everything will break if BLOCKNUM is not correctly received
-        // First get the BLOCKNUM file if totalBlocksInSplit(inputId) is unknown
+        // First get the BLOCKNUM file if totalBlocksInSplit(splitIndex) is unknown
         if (totalBlocksInSplit(inputId) == -1) {
           val url = "%s/shuffle/%d/%d/BLOCKNUM-%d".format(serverUri, shuffleId, 
             inputId, myId)
           val inputStream = new ObjectInputStream(new URL(url).openStream())
-          totalBlocksInSplit(inputId) = 
+          totalBlocksInSplit(splitIndex) = 
             inputStream.readObject().asInstanceOf[Int]
           inputStream.close()
         }
@@ -239,10 +239,10 @@ extends Shuffle[K, V, C] with Logging {
         logInfo("Reading " + url + " took " + readTime + " millis.")
 
         // Reception completed. Update stats.
-        hasBlocksInSplit(inputId) = hasBlocksInSplit(inputId) + 1
+        hasBlocksInSplit(splitIndex) = hasBlocksInSplit(splitIndex) + 1
         
         // Split has been received only if all the blocks have been received
-        if (hasBlocksInSplit(inputId) == totalBlocksInSplit(inputId)) {
+        if (hasBlocksInSplit(splitIndex) == totalBlocksInSplit(splitIndex)) {
           hasSplitsBitVector.synchronized {
             hasSplitsBitVector.set(splitIndex)
           }
