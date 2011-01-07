@@ -6,6 +6,7 @@ import java.util.{BitSet, Comparator, Random, Timer, TimerTask, UUID}
 import java.util.concurrent.{Executors, ThreadFactory, ThreadPoolExecutor}
 
 import scala.collection.mutable.{ListBuffer, Map, Set}
+import scala.io.Source._
 
 @serializable
 class BitTorrentBroadcast[T] (@transient var value_ : T, isLocal: Boolean) 
@@ -702,6 +703,9 @@ extends Broadcast[T] with Logging {
     // Keep track of sources that have completed reception
     private var setOfCompletedSources = Set[SourceInfo] ()
   
+    // Load topology information from file
+    private var clusterTopology = readClusterTopology("CLUSTER.TOPO")
+  
     override def run: Unit = {
       var threadPool = Broadcast.newDaemonCachedThreadPool
       var serverSocket: ServerSocket = null
@@ -806,6 +810,16 @@ extends Broadcast[T] with Logging {
       }
     }
     
+    // Loads the topology of the cluster from a given file
+    // Line i contains the IP addresses of i-th cluster separated by whitespace
+    private def readClusterTopology(topoPath: String): ListBuffer[Array[String]] = synchronized {
+      var retVal = new ListBuffer[Array[String]]
+      for(line <- fromFile(topoPath).getLines) {
+        retVal += line.split(" ")
+      }
+      return retVal
+    }
+    
     class GuideSingleRequest (val clientSocket: Socket)
     extends Thread with Logging {
       private val oos = new ObjectOutputStream (clientSocket.getOutputStream)
@@ -858,32 +872,126 @@ extends Broadcast[T] with Logging {
           return selectedSources
         }
         
-        listOfSources.synchronized {
-          if (listOfSources.size <= BitTorrentBroadcast.MaxPeersInGuideResponse) {
-            selectedSources = listOfSources.clone
-          } else {
-            var picksLeft = BitTorrentBroadcast.MaxPeersInGuideResponse
-            var alreadyPicked = new BitSet (listOfSources.size)
+        // Find out the actual number of sources present in clusters
+        var numSourceInClusters = 0
+        if (clusterTopology != null) {
+          clusterTopology.synchronized {
+            clusterTopology.foreach(numSourceInClusters += _.size)
+          }
+        }
+        
+        // If we have a cluster topology and everyone has already contacted 
+        if (clusterTopology != null && numSourceInClusters <= listOfSources.size) {
+          clusterTopology.synchronized {
+            // Find the index of the cluster of skipSourceInfo
+            val homeIndex = 
+              clusterTopology.findIndexOf(_.contains(skipSourceInfo.hostAddress))
+            if (homeIndex == -1) {
+              throw new SparkException("No cluster has " + skipSourceInfo.hostAddress)
+            }
             
-            while (picksLeft > 0) {
-              var i = -1
-              
-              do {
-                i = BitTorrentBroadcast.ranGen.nextInt (listOfSources.size)
-              } while (alreadyPicked.get(i))
-              
-              var peerIter = listOfSources.iterator        
-              var curPeer = peerIter.next
-              
-              while (i > 0) {
-                curPeer = peerIter.next
-                i = i - 1
+            var homeSources = clusterTopology(homeIndex)
+            var awaySources = new ListBuffer[String]
+            for (i <- 0 until clusterTopology.size) {
+              if (i != homeIndex) {
+                clusterTopology(i).foreach { awaySources += _ }
               }
+            }
+            
+            // Now decide how many to pick from the homeCluster and how many 
+            // from the rest out of BitTorrentBroadcast.MaxPeersInGuideResponse
+            // TODO: This part is tricky because the default value for 
+            // BitTorrentBroadcast.MaxPeersInGuideResponse is only 4. 
+            var pickFromHome = Math.max(
+              BitTorrentBroadcast.MaxPeersInGuideResponse / 2, 
+              BitTorrentBroadcast.MaxPeersInGuideResponse - 
+                clusterTopology.size + 1)
+            pickFromHome = Math.min(pickFromHome, homeSources.size)
+
+            var pickFromAway = BitTorrentBroadcast.MaxPeersInGuideResponse - 
+              pickFromHome
+            pickFromAway = Math.min(pickFromAway, awaySources.size)
               
-              selectedSources = selectedSources + curPeer
-              alreadyPicked.set (i)
+            listOfSources.synchronized {
+              var alreadyPicked = new BitSet(homeSources.size)
+              while (pickFromHome > 0) {
+                var i = -1                
+                do {
+                  i = BitTorrentBroadcast.ranGen.nextInt(homeSources.size)
+                } while (alreadyPicked.get(i))
+
+                var peerIter = listOfSources.iterator        
+                
+                var BREAK = false
+                var curPeer: SourceInfo = null
+                
+                while (peerIter.hasNext && !BREAK) {
+                  curPeer = peerIter.next
+                  if (curPeer.hostAddress == homeSources(i)) {                
+                    BREAK = true
+                  }
+                }
+                
+                selectedSources = selectedSources + curPeer
+                alreadyPicked.set(i)
+
+                pickFromHome -= 1
+              }
+
+              alreadyPicked = new BitSet(awaySources.size)
+              while (pickFromAway > 0) {
+                var i = -1                
+                do {
+                  i = BitTorrentBroadcast.ranGen.nextInt(awaySources.size)
+                } while (alreadyPicked.get(i))
+
+                var peerIter = listOfSources.iterator        
+                
+                var BREAK = false
+                var curPeer: SourceInfo = null
+                
+                while (peerIter.hasNext && !BREAK) {
+                  curPeer = peerIter.next
+                  if (curPeer.hostAddress == awaySources(i)) {                
+                    BREAK = true
+                  }
+                }
+                
+                selectedSources = selectedSources + curPeer
+                alreadyPicked.set(i)
+
+                pickFromAway -= 1
+              }
+            }            
+          }
+        } else {
+          listOfSources.synchronized {
+            if (listOfSources.size <= BitTorrentBroadcast.MaxPeersInGuideResponse) {
+              selectedSources = listOfSources.clone
+            } else {
+              var picksLeft = BitTorrentBroadcast.MaxPeersInGuideResponse
+              var alreadyPicked = new BitSet (listOfSources.size)
               
-              picksLeft = picksLeft - 1
+              while (picksLeft > 0) {
+                var i = -1
+                
+                do {
+                  i = BitTorrentBroadcast.ranGen.nextInt (listOfSources.size)
+                } while (alreadyPicked.get(i))
+                
+                var peerIter = listOfSources.iterator        
+                var curPeer = peerIter.next
+                
+                while (i > 0) {
+                  curPeer = peerIter.next
+                  i = i - 1
+                }
+                
+                selectedSources = selectedSources + curPeer
+                alreadyPicked.set (i)
+                
+                picksLeft = picksLeft - 1
+              }
             }
           }
         }
