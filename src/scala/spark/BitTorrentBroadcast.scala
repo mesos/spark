@@ -1001,6 +1001,9 @@ extends Broadcast[T] with Logging {
         // Remove the receiving source (if present)
         selectedSources = selectedSources - skipSourceInfo
         
+        // Add master's localSourceInfo
+        selectedSources = selectedSources + getLocalSourceInfo
+        
         return selectedSources
       }
     }    
