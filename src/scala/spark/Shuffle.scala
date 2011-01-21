@@ -26,6 +26,7 @@ extends Logging {
   // Tracker communication constants
   val ReducerEntering = 0
   val ReducerLeaving = 1
+  val ReducerCompleted = 2
 
   // ShuffleTracker info
   private var MasterHostAddress_ = System.getProperty(
@@ -122,6 +123,10 @@ case class SplitInfo(val hostAddress: String, val listenPort: Int,
 object SplitInfo {
   // Constants for special values of listenPort
   val MappersBusy = -1
+  
+  // Used by SuperTracker-related implementation
+  val TrackerDoesNotExist = -1
+  val ShuffleAlreadyFinished = -2
 
   // Other constants
   val UnusedParam = 0

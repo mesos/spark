@@ -6,7 +6,7 @@ import java.util.{BitSet, Random, Timer, TimerTask, UUID}
 import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.{LinkedBlockingQueue, Executors, ThreadPoolExecutor, ThreadFactory}
 
-import scala.collection.mutable.{ArrayBuffer, HashMap}
+import scala.collection.mutable.{ArrayBuffer, HashMap, Set}
 
 /**
  * An implementation of shuffle using memory served through custom server 
@@ -40,6 +40,12 @@ extends Shuffle[K, V, C] with Logging {
   @transient var receivedData: LinkedBlockingQueue[(Int, Array[Byte])] = null  
   @transient var combiners: HashMap[K,C] = null
   
+  // TODO: Right now these are automatically transported to reducers through
+  // master. Should be fixed. 
+  var trackerHostAddress = ""
+  var trackerPort = -1
+  @transient var trackerPortLock = new Object
+
   override def compute(input: RDD[(K, V)],
                        numOutputSplits: Int,
                        createCombiner: V => C,
@@ -50,6 +56,10 @@ extends Shuffle[K, V, C] with Logging {
     val sc = input.sparkContext
     val shuffleId = TrackedCustomBlockedInMemoryShuffle.newShuffleId()
     logInfo("Shuffle ID: " + shuffleId)
+
+    // TODO: This is not same as the UUID used for creating shuffle directories
+    // in filesystem or in memory. Should be merged.
+    val shuffleUUID = UUID.randomUUID
 
     val splitRdd = new NumberedSplitRDD(input)
     val numInputSplits = splitRdd.splits.size
@@ -150,14 +160,28 @@ extends Shuffle[K, V, C] with Logging {
     }).collect()
 
     // Start tracker
-    var shuffleTracker = new ShuffleTracker(outputLocs)
-    shuffleTracker.setDaemon(true)
+    var shuffleTracker = new ShuffleTracker(shuffleUUID, outputLocs)
+    // TODO: Tracker is NOT daemon. It will quit when all the reducers have 
+    // finished and it has notified the SuperTracker
+    // shuffleTracker.setDaemon(true)
     shuffleTracker.start()
     logInfo("ShuffleTracker started...")
+
+    // Must always come after shuffleTracker is created
+    // Blocks master until trackerPort is setup and registered with SuperTracker    
+    while (trackerPort == -1) {
+      trackerPortLock.synchronized {
+        trackerPortLock.wait()
+      }
+    }
 
     // Return an RDD that does each of the merges for a given partition
     val indexes = sc.parallelize(0 until numOutputSplits, numOutputSplits)
     return indexes.flatMap((myId: Int) => {
+      // First receive tracker information from the SuperTracker
+      // trackerHostAddress and trackerPort will be set due to method sideeffect
+      getTrackerInformation(shuffleUUID)
+    
       totalSplits = outputLocs.size
       hasSplits = 0
       
@@ -219,6 +243,9 @@ extends Shuffle[K, V, C] with Logging {
       }
 
       threadPool.shutdown()
+      
+      // Notify tracker that it has completed reducing
+      notifyCompletionToTracker(myId)
 
       // Start consumer
       // TODO: Consumption is delayed until everything has been received. 
@@ -236,6 +263,63 @@ extends Shuffle[K, V, C] with Logging {
       
       combiners
     })
+  }
+  
+  private def notifyCompletionToTracker(myId: Int): Unit = {
+    val clientSocketToTracker = new Socket(trackerHostAddress, trackerPort)
+    val oosTracker =
+      new ObjectOutputStream(clientSocketToTracker.getOutputStream)
+    oosTracker.flush()
+    val oisTracker =
+      new ObjectInputStream(clientSocketToTracker.getInputStream)
+
+    try {
+      // Send intention
+      oosTracker.writeObject(Shuffle.ReducerCompleted)
+      oosTracker.flush()
+      
+      // Send reducerSplitInfo
+      oosTracker.writeObject(getLocalSplitInfo(myId))
+      oosTracker.flush()
+    } catch {
+      case e: Exception => {
+        logInfo("notifyCompletionToTracker had a " + e)
+      }
+    } finally {
+      oisTracker.close()
+      oosTracker.close()
+      clientSocketToTracker.close()
+    }
+  }
+  
+  private def getTrackerInformation(shuffleUUID: UUID): SplitInfo = {
+    val socketToSuperTracker = new Socket(Shuffle.MasterHostAddress, 
+      Shuffle.MasterTrackerPort)
+    val oosST = new ObjectOutputStream(socketToSuperTracker.getOutputStream)
+    oosST.flush()
+    val oisST = new ObjectInputStream(socketToSuperTracker.getInputStream)
+    
+    // Send messageType/intention
+    oosST.writeObject(ShuffleSuperTracker.FIND_SHUFFLE_TRACKER)
+    oosST.flush()
+    
+    // Send UUID of this shuffle
+    oosST.writeObject(shuffleUUID)
+    oosST.flush()
+
+    // Receive tracker information
+    val trackerSplitInfo = oisST.readObject.asInstanceOf[SplitInfo]
+    
+    // Update local variables
+    trackerHostAddress = trackerSplitInfo.hostAddress
+    trackerPort = trackerSplitInfo.listenPort
+    
+    // Shut stuff down
+    oisST.close()
+    oosST.close()
+    socketToSuperTracker.close()
+    
+    return trackerSplitInfo
   }
   
   private def getLocalSplitInfo(myId: Int): SplitInfo = {
@@ -294,8 +378,8 @@ extends Shuffle[K, V, C] with Logging {
       return ArrayBuffer[Int]()
     }
 
-    val clientSocketToTracker = new Socket(Shuffle.MasterHostAddress, 
-      Shuffle.MasterTrackerPort)
+    val clientSocketToTracker = new Socket(trackerHostAddress, 
+      trackerPort)
     val oosTracker =
       new ObjectOutputStream(clientSocketToTracker.getOutputStream)
     oosTracker.flush()
@@ -350,11 +434,28 @@ extends Shuffle[K, V, C] with Logging {
     return selectedSplitIndices
   }
   
-  class ShuffleTracker(outputLocs: Array[SplitInfo])
+  class ShuffleTracker(shuffleUUID: UUID, outputLocs: Array[SplitInfo])
   extends Thread with Logging {
     var threadPool = Shuffle.newDaemonCachedThreadPool
-    var serverSocket: ServerSocket = null
 
+    var numMappers = outputLocs.size
+    // All the outputLocs have totalBlocksPerOutputSplit of same size
+    var numReducers = outputLocs(0).totalBlocksPerOutputSplit.size
+    // Keep track of how many reducers haven't finished yet
+    var remainingReducers = new AtomicLong(numReducers)    
+
+    // Create a ServerSocket
+    var trackerSocket = new ServerSocket(0)
+    trackerHostAddress = InetAddress.getLocalHost.getHostAddress
+    trackerPort = trackerSocket.getLocalPort
+    logInfo("ShuffleTracker => " + trackerSocket + " " + trackerPort)
+    
+    // Now register with SuperTracker
+    registerToSuperTracker
+
+    // Receive initial SuperTrackerCapOnMaxRxConnections
+    var SuperTrackerCapOnMaxRxConnections = receiveShareFromSuperTracker
+    
     // Create trackerStrategy object
     val trackerStrategyClass = System.getProperty(
       "spark.shuffle.trackerStrategy", 
@@ -365,18 +466,32 @@ extends Shuffle[K, V, C] with Logging {
       
     // Must initialize here by supplying the outputLocs param
     // TODO: This could be avoided by directly passing it to the constructor
-    trackerStrategy.initialize(outputLocs)
+    trackerStrategy.initialize(outputLocs, SuperTrackerCapOnMaxRxConnections)
+
+    // Start a thread to periodically update SuperTrackerCapOnMaxRxConnections
+    // Must be started after trackerStrategy has been initialized
+    var ttSuperTracker = new TalkToSuperTracker
+    ttSuperTracker.setDaemon(true)
+    ttSuperTracker.start()
+    logInfo("ttSuperTracker started...")
+
+    // Now let master move forward      
+    trackerPortLock.synchronized {
+      trackerPortLock.notifyAll()
+    }
 
     override def run: Unit = {
-      serverSocket = new ServerSocket(Shuffle.MasterTrackerPort)
-      logInfo("ShuffleTracker" + serverSocket)
-      
       try {
-        while (true) {
+        while (remainingReducers.get > 0) {
           var clientSocket: Socket = null
           try {
-            clientSocket = serverSocket.accept()
+            trackerSocket.setSoTimeout(Shuffle.MaxKnockInterval)
+            clientSocket = trackerSocket.accept()
           } catch {
+            // TODO: Catching java.net.SocketTimeoutException was crashing 
+            // case ste: java.net.SocketTimeoutException => {
+              // logInfo("ShuffleTracker timed out...")
+            // }
             case e: Exception => {
               logInfo("ShuffleTracker had a " + e)
             }
@@ -435,6 +550,11 @@ extends Shuffle[K, V, C] with Logging {
                       oos.writeObject(receptionStat.serverSplitIndex)
                       oos.flush()
                     }
+                    else if (reducerIntention == Shuffle.ReducerCompleted) {
+                      // Reduce the number of reducers
+                      var temp = remainingReducers.decrementAndGet()
+                      logInfo ("remainingReducers = " + temp)
+                    }
                     else {
                       throw new SparkException("Undefined reducerIntention")
                     }
@@ -461,11 +581,113 @@ extends Shuffle[K, V, C] with Logging {
           }
         }
       } finally {
-        serverSocket.close()
+        trackerSocket.close()
       }
       // Shutdown the thread pool
       threadPool.shutdown()
-    }  
+      
+      // Finally, remove this shuffle from SuperTracker
+      unregisterFromSuperTracker()
+    }
+
+    // Register to the SuperTracker    
+    // TODO: This method does not have any error handling
+    def registerToSuperTracker(): Unit = {
+      val socketToSuperTracker = new Socket(Shuffle.MasterHostAddress, 
+        Shuffle.MasterTrackerPort)
+      val oosST = new ObjectOutputStream(socketToSuperTracker.getOutputStream)
+      oosST.flush()
+      val oisST = new ObjectInputStream(socketToSuperTracker.getInputStream)
+      
+      // Send messageType/intention
+      oosST.writeObject(ShuffleSuperTracker.REGISTER_SHUFFLE_TRACKER)
+      oosST.flush()
+      
+      // Send UUID of this shuffle
+      oosST.writeObject(shuffleUUID)
+      oosST.flush()
+      
+      // Send this tracker's information
+      oosST.writeObject(SplitInfo(trackerHostAddress, trackerPort, 
+        SplitInfo.UnusedParam))
+      oosST.flush()
+      
+      // Shut stuff down
+      oisST.close()
+      oosST.close()
+      socketToSuperTracker.close()
+    }
+
+    // Unregister from the SuperTracker    
+    // TODO: This method does not have any error handling
+    def unregisterFromSuperTracker(): Unit = {
+      val socketToSuperTracker = new Socket(Shuffle.MasterHostAddress, 
+        Shuffle.MasterTrackerPort)
+      val oosST = new ObjectOutputStream(socketToSuperTracker.getOutputStream)
+      oosST.flush()
+      val oisST = new ObjectInputStream(socketToSuperTracker.getInputStream)
+      
+      // Send messageType/intention
+      oosST.writeObject(ShuffleSuperTracker.UNREGISTER_SHUFFLE_TRACKER)
+      oosST.flush()
+      
+      // Send UUID of this shuffle
+      oosST.writeObject(shuffleUUID)
+      oosST.flush()
+      
+      // Shut stuff down
+      oisST.close()
+      oosST.close()
+      socketToSuperTracker.close()
+    }
+    
+    // Right now recieves share in the form of SuperTrackerCapOnMaxRxConnections
+    // TODO: Support flexible share receiving mechanism
+    def receiveShareFromSuperTracker: Int = {
+      val socketToSuperTracker = new Socket(Shuffle.MasterHostAddress, 
+        Shuffle.MasterTrackerPort)
+      val oosST = new ObjectOutputStream(socketToSuperTracker.getOutputStream)
+      oosST.flush()
+      val oisST = new ObjectInputStream(socketToSuperTracker.getInputStream)
+      
+      // Send messageType/intention
+      oosST.writeObject(ShuffleSuperTracker.GET_UPDATED_SHARE)
+      oosST.flush()
+      
+      // Send UUID of this shuffle
+      oosST.writeObject(shuffleUUID)
+      oosST.flush()
+
+      // Receive share
+      val SuperTrackerCapOnMaxRxConnections = oisST.readObject.asInstanceOf[Int]
+      
+      // Shut stuff down
+      oisST.close()
+      oosST.close()
+      socketToSuperTracker.close()
+      
+      return SuperTrackerCapOnMaxRxConnections
+    }
+    
+    // Periodically talks to the SuperTracker to get updated share
+    class TalkToSuperTracker
+    extends Thread {      
+      override def run: Unit = {
+        while (true) {
+          // Receive share
+          val SuperTrackerCapOnMaxRxConnections = receiveShareFromSuperTracker
+          
+          // Update ShuffleTrackerStrategy's information          
+          trackerStrategy.synchronized {
+            trackerStrategy.updateShare(SuperTrackerCapOnMaxRxConnections)
+          }
+          logInfo("Updated SuperTrackerCapOnMaxRxConnections = " + SuperTrackerCapOnMaxRxConnections)
+          
+          // Sleep now
+          Thread.sleep(Shuffle.MaxKnockInterval)
+        }
+      }
+    }
   }  
 
   class ShuffleConsumer(mergeCombiners: (C, C) => C)
@@ -638,8 +860,7 @@ extends Shuffle[K, V, C] with Logging {
     // Connect to the tracker and update its stats
     private def sendLeavingNotification(): Unit = synchronized {
       if (!alreadySentLeavingNotification) {
-        val clientSocketToTracker = new Socket(Shuffle.MasterHostAddress, 
-          Shuffle.MasterTrackerPort)
+        val clientSocketToTracker = new Socket(trackerHostAddress, trackerPort)
         val oosTracker =
           new ObjectOutputStream(clientSocketToTracker.getOutputStream)
         oosTracker.flush()

@@ -10,7 +10,8 @@ import scala.util.Sorting._
  */
 trait ShuffleTrackerStrategy {
   // Initialize
-  def initialize(outputLocs_ : Array[SplitInfo]): Unit
+  def initialize(outputLocs_ : Array[SplitInfo], 
+    SuperTrackerCapOnMaxRxConnections_ : Int): Unit
   
   // Select a set of splits and send back
   def selectSplit(reducerSplitInfo: SplitInfo): ArrayBuffer[Int]
@@ -21,6 +22,9 @@ trait ShuffleTrackerStrategy {
   // A reducer is done. Update internal stats
   def deleteReducerFrom(reducerSplitInfo: SplitInfo, 
     receptionStat: ReceptionStats): Unit
+    
+  // Update share as directed by SuperTracker
+  def updateShare(SuperTrackerCapOnMaxRxConnections_ : Int): Unit
 }
 
 /**
@@ -42,7 +46,9 @@ extends ShuffleTrackerStrategy with Logging {
   
   // The order of elements in the outputLocs (splitIndex) is used to pass 
   // information back and forth between the tracker, mappers, and reducers
-  def initialize(outputLocs_ : Array[SplitInfo]): Unit = {
+  def initialize(outputLocs_ : Array[SplitInfo], 
+    SuperTrackerCapOnMaxRxConnections_ : Int): Unit = {
+    
     outputLocs = outputLocs_
     numSources = outputLocs.size
     
@@ -99,6 +105,9 @@ extends ShuffleTrackerStrategy with Logging {
       curConnectionsPerLoc(receptionStat.serverSplitIndex) = 0
     }
   }
+
+  def updateShare(SuperTrackerCapOnMaxRxConnections_ : Int): Unit = {
+  }
 }
 
 /**
@@ -113,7 +122,9 @@ extends ShuffleTrackerStrategy with Logging {
   
   // The order of elements in the outputLocs (splitIndex) is used to pass 
   // information back and forth between the tracker, mappers, and reducers
-  def initialize(outputLocs_ : Array[SplitInfo]): Unit = {
+  def initialize(outputLocs_ : Array[SplitInfo], 
+    SuperTrackerCapOnMaxRxConnections_ : Int): Unit = {
+    
     outputLocs = outputLocs_
     numMappers = outputLocs.size
   }
@@ -136,6 +147,9 @@ extends ShuffleTrackerStrategy with Logging {
     // TODO: This assertion can legally fail when ShuffleClient times out while
     // waiting for tracker response and decides to go to a random server
     // assert(curConnectionsPerLoc(receptionStat.serverSplitIndex) >= 0)
+  }
+
+  def updateShare(SuperTrackerCapOnMaxRxConnections_ : Int): Unit = {
   }
 }
 
@@ -163,7 +177,9 @@ extends ShuffleTrackerStrategy with Logging {
 
   // The order of elements in the outputLocs (splitIndex) is used to pass 
   // information back and forth between the tracker, mappers, and reducers
-  def initialize(outputLocs_ : Array[SplitInfo]): Unit = {
+  def initialize(outputLocs_ : Array[SplitInfo], 
+    SuperTrackerCapOnMaxRxConnections_ : Int): Unit = {
+    
     outputLocs = outputLocs_
 
     numMappers = outputLocs.size
@@ -304,6 +320,9 @@ extends ShuffleTrackerStrategy with Logging {
       curConnectionsPerLoc(receptionStat.serverSplitIndex) = 0
     }
   }
+
+  def updateShare(SuperTrackerCapOnMaxRxConnections_ : Int): Unit = {
+  }
 }
 
 /**
@@ -316,7 +335,9 @@ extends ShuffleTrackerStrategy with Logging {
   private var numMappers = -1
   // Number of reducers
   private var numReducers = -1
+
   private var outputLocs: Array[SplitInfo] = null
+  private var SuperTrackerCapOnMaxRxConnections: Int = -1
   
   private var ranGen = new Random
   
@@ -332,8 +353,11 @@ extends ShuffleTrackerStrategy with Logging {
 
   // The order of elements in the outputLocs (splitIndex) is used to pass 
   // information back and forth between the tracker, mappers, and reducers
-  def initialize(outputLocs_ : Array[SplitInfo]): Unit = {
+  def initialize(outputLocs_ : Array[SplitInfo], 
+    SuperTrackerCapOnMaxRxConnections_ : Int): Unit = {
+    
     outputLocs = outputLocs_
+    SuperTrackerCapOnMaxRxConnections = SuperTrackerCapOnMaxRxConnections_
 
     numMappers = outputLocs.size
 
@@ -349,7 +373,7 @@ extends ShuffleTrackerStrategy with Logging {
     speedPerInputSplit = Array.tabulate(numReducers, numMappers)((_,_) => -1.0)
 
     curConnectionsPerReducer = Array.tabulate(numReducers)(_ => 0)
-    maxConnectionsPerReducer = Array.tabulate(numReducers)(_ => Shuffle.MaxRxConnections)
+    maxConnectionsPerReducer = Array.tabulate(numReducers)(_ => SuperTrackerCapOnMaxRxConnections)
   }
   
   def selectSplit(reducerSplitInfo: SplitInfo): ArrayBuffer[Int] = synchronized {
@@ -389,7 +413,7 @@ extends ShuffleTrackerStrategy with Logging {
     // If a certain number of reducers have finished already, then don't bother
     if (numFinished  >= ((1.0 - 0.1 * Shuffle.ThrottleFraction) * numReducers)) {
       for (i <- 0 until numReducers) {
-        maxConnectionsPerReducer(i) = Shuffle.MaxRxConnections
+        maxConnectionsPerReducer(i) = SuperTrackerCapOnMaxRxConnections
       }      
       // Otherwise, if estimation is complete give reducers proportional threads
     } else if (estimationComplete) {
@@ -402,7 +426,7 @@ extends ShuffleTrackerStrategy with Logging {
       // estimated time remaining with slowestEstimate reducer having the max
       for (i <- 0 until numReducers) {
         maxConnectionsPerReducer(i) = 
-          ((completionEstimates(i) / slowestEstimate) * Shuffle.MaxRxConnections).toInt
+          ((completionEstimates(i) / slowestEstimate) * SuperTrackerCapOnMaxRxConnections).toInt
       }
     }
 
@@ -466,5 +490,10 @@ extends ShuffleTrackerStrategy with Logging {
     if (curConnectionsPerReducer(reducerSplitInfo.splitId) < 0) {
       curConnectionsPerReducer(reducerSplitInfo.splitId) = 0
     }
+  }
+  
+  def updateShare(SuperTrackerCapOnMaxRxConnections_ : Int): Unit = {
+    SuperTrackerCapOnMaxRxConnections = SuperTrackerCapOnMaxRxConnections_
+    logInfo("Updated share received from SuperTracker")
   }
 }

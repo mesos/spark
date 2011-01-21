@@ -284,7 +284,8 @@ extends Shuffle[K, V, C] with Logging {
       
     // Must initialize here by supplying the outputLocs param
     // TODO: This could be avoided by directly passing it to the constructor
-    trackerStrategy.initialize(outputLocs)
+    // TODO: Using a -1 because of a interface change in ShuffleTrackerStrategy
+    trackerStrategy.initialize(outputLocs, -1)
 
     override def run: Unit = {
       serverSocket = new ServerSocket(Shuffle.MasterTrackerPort)
