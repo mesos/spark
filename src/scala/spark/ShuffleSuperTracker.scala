@@ -77,7 +77,8 @@ object ShuffleSuperTracker {
                       
                       // Remove from the map
                       uuidToTrackerMap.synchronized {
-                        uuidToTrackerMap(uuid) = SplitInfo("", SplitInfo.ShuffleAlreadyFinished, SplitInfo.UnusedParam)
+                        uuidToTrackerMap -= uuid
+                        // uuidToTrackerMap(uuid) = SplitInfo("", SplitInfo.ShuffleAlreadyFinished, SplitInfo.UnusedParam)
                       } 
 
                       // Remove from listOfShuffles
