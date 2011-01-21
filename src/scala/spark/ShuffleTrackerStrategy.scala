@@ -495,5 +495,10 @@ extends ShuffleTrackerStrategy with Logging {
   def updateShare(SuperTrackerCapOnMaxRxConnections_ : Int): Unit = {
     SuperTrackerCapOnMaxRxConnections = SuperTrackerCapOnMaxRxConnections_
     logInfo("Updated share received from SuperTracker")
+    
+    // Now update maxConnectionsPerReducer
+    for (i <- 0 until numReducers) {
+      maxConnectionsPerReducer(i) = SuperTrackerCapOnMaxRxConnections
+    }
   }
 }

@@ -281,6 +281,9 @@ extends Shuffle[K, V, C] with Logging {
       // Send reducerSplitInfo
       oosTracker.writeObject(getLocalSplitInfo(myId))
       oosTracker.flush()
+      
+      // Receive dummy ACK and throw away
+      oisTracker.readObject.asInstanceOf[Int]
     } catch {
       case e: Exception => {
         logInfo("notifyCompletionToTracker had a " + e)
@@ -442,7 +445,7 @@ extends Shuffle[K, V, C] with Logging {
     // All the outputLocs have totalBlocksPerOutputSplit of same size
     var numReducers = outputLocs(0).totalBlocksPerOutputSplit.size
     // Keep track of how many reducers haven't finished yet
-    var remainingReducers = new AtomicLong(numReducers)    
+    var remainingReducers = new AtomicLong(numReducers)
 
     // Create a ServerSocket
     var trackerSocket = new ServerSocket(0)
@@ -551,9 +554,16 @@ extends Shuffle[K, V, C] with Logging {
                       oos.flush()
                     }
                     else if (reducerIntention == Shuffle.ReducerCompleted) {
+                      val reducerSplitInfo = 
+                        ois.readObject.asInstanceOf[SplitInfo]
+
                       // Reduce the number of reducers
                       var temp = remainingReducers.decrementAndGet()
                       logInfo ("remainingReducers = " + temp)
+                      
+                      // Send dummy ACK
+                      oos.writeObject(-1)
+                      oos.flush()
                     }
                     else {
                       throw new SparkException("Undefined reducerIntention")
@@ -588,6 +598,7 @@ extends Shuffle[K, V, C] with Logging {
       
       // Finally, remove this shuffle from SuperTracker
       unregisterFromSuperTracker()
+      logInfo("Unregistered from SuperTracker")
     }
 
     // Register to the SuperTracker    
@@ -679,7 +690,7 @@ extends Shuffle[K, V, C] with Logging {
     class TalkToSuperTracker
     extends Thread {      
       override def run: Unit = {
-        while (true) {
+        while (remainingReducers.get > 0) {
           // Receive share
           val SuperTrackerCapOnMaxRxConnections = receiveShareFromSuperTracker
           

@@ -68,7 +68,7 @@ object ShuffleSuperTracker {
                       logInfo ("New shuffle registered with the ShuffleSuperTracker " + uuid + " " + uuidToTrackerMap + " " + listOfShuffles)
                       
                       // Send dummy ACK
-                      oos.writeObject(listOfShuffles.size)
+                      oos.writeObject(-1)
                       oos.flush()
                     } 
                     else if (messageType == UNREGISTER_SHUFFLE_TRACKER) {
@@ -89,20 +89,22 @@ object ShuffleSuperTracker {
                       logInfo ("Shuffle unregistered from the ShuffleSuperTracker " + uuid + " " + uuidToTrackerMap + " " + listOfShuffles)
 
                       // Send dummy ACK
-                      oos.writeObject(listOfShuffles.size)
+                      oos.writeObject(-1)
                       oos.flush()
                     }
                     else if (messageType == FIND_SHUFFLE_TRACKER) {
                       // Receive uuid
                       val uuid = ois.readObject.asInstanceOf[UUID]
                       
-                      var tInfo = 
-                        if (uuidToTrackerMap.contains(uuid)) {
-                          uuidToTrackerMap(uuid)
-                        } else {
-                          SplitInfo("", SplitInfo.TrackerDoesNotExist,
-                            SplitInfo.UnusedParam)
-                        }
+                      var tInfo: SplitInfo = null                      
+                      uuidToTrackerMap.synchronized {
+                        tInfo = if (uuidToTrackerMap.contains(uuid)) {
+                                  uuidToTrackerMap(uuid)
+                                } else {
+                                  SplitInfo("", SplitInfo.TrackerDoesNotExist,
+                                    SplitInfo.UnusedParam)
+                                }
+                      }
                         
                       logInfo ("ShuffleSuperTracker: Got new request: " + clientSocket + " for " + uuid + " : " + tInfo.listenPort)
                       
@@ -122,7 +124,8 @@ object ShuffleSuperTracker {
                       var allocatedConnections = -1
                       listOfShuffles.synchronized {
                         allocatedConnections = 
-                          if (uuid.compareTo(listOfShuffles(0)) == 0) {
+                          if (listOfShuffles.size > 0 && 
+                              uuid.compareTo(listOfShuffles(0)) == 0) {
                            maxRxConnections
                           } else {
                             0
