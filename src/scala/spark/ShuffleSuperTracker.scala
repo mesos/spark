@@ -41,9 +41,9 @@ object ShuffleSuperTracker {
             try {
               threadPool.execute (new Thread {
                 override def run: Unit = {
-                  val oos = new ObjectOutputStream (clientSocket.getOutputStream)
+                  val oos = new ObjectOutputStream(clientSocket.getOutputStream)
                   oos.flush
-                  val ois = new ObjectInputStream (clientSocket.getInputStream)
+                  val ois = new ObjectInputStream(clientSocket.getInputStream)
                   
                   try {
                     // First, read message type
@@ -57,14 +57,19 @@ object ShuffleSuperTracker {
                       
                       // Add to the map
                       uuidToTrackerMap.synchronized {
-                        uuidToTrackerMap += (uuid -> tInfo)
-                        logInfo ("New shuffle registered with the ShuffleSuperTracker " + uuid + " " + uuidToTrackerMap)
+                        uuidToTrackerMap += (uuid -> tInfo)                        
                       }
                       
                       // Add to listOfShuffles
                       listOfShuffles.synchronized {
                         listOfShuffles += uuid
                       }
+                      
+                      logInfo ("New shuffle registered with the ShuffleSuperTracker " + uuid + " " + uuidToTrackerMap + " " + listOfShuffles)
+                      
+                      // Send dummy ACK
+                      oos.writeObject(listOfShuffles.size)
+                      oos.flush()
                     } 
                     else if (messageType == UNREGISTER_SHUFFLE_TRACKER) {
                       // Receive UUID
@@ -73,13 +78,18 @@ object ShuffleSuperTracker {
                       // Remove from the map
                       uuidToTrackerMap.synchronized {
                         uuidToTrackerMap(uuid) = SplitInfo("", SplitInfo.ShuffleAlreadyFinished, SplitInfo.UnusedParam)
-                        logInfo ("Shuffle unregistered from the ShuffleSuperTracker " + uuid + " " + uuidToTrackerMap)
                       } 
 
                       // Remove from listOfShuffles
                       listOfShuffles.synchronized {
                         listOfShuffles -= uuid
                       }
+
+                      logInfo ("Shuffle unregistered from the ShuffleSuperTracker " + uuid + " " + uuidToTrackerMap + " " + listOfShuffles)
+
+                      // Send dummy ACK
+                      oos.writeObject(listOfShuffles.size)
+                      oos.flush()
                     }
                     else if (messageType == FIND_SHUFFLE_TRACKER) {
                       // Receive uuid
@@ -96,7 +106,8 @@ object ShuffleSuperTracker {
                       logInfo ("ShuffleSuperTracker: Got new request: " + clientSocket + " for " + uuid + " : " + tInfo.listenPort)
                       
                       // Send reply back
-                      oos.writeObject (tInfo)                      
+                      oos.writeObject(tInfo)
+                      oos.flush()
                     }
                     else if (messageType == GET_UPDATED_SHARE) {
                       // This is the most important part. Trackers for different
@@ -105,8 +116,21 @@ object ShuffleSuperTracker {
                       // Receive UUID
                       val uuid = ois.readObject.asInstanceOf[UUID]
                       
-                      // Calculate share!
-                      oos.writeObject(maxRxConnections)
+                      // If uuid was the 1st one to start, give it full share.
+                      // Basically we are doing FIFO                      
+                      var allocatedConnections = -1
+                      listOfShuffles.synchronized {
+                        allocatedConnections = 
+                          if (uuid.compareTo(listOfShuffles(0)) == 0) {
+                           maxRxConnections
+                          } else {
+                            0
+                          }                    
+                      }
+                      
+                      logInfo("allocatedConnections = " + allocatedConnections)
+
+                      oos.writeObject(allocatedConnections)
                       oos.flush()
                     }
                     else {

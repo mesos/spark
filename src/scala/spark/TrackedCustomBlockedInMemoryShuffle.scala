@@ -612,6 +612,9 @@ extends Shuffle[K, V, C] with Logging {
         SplitInfo.UnusedParam))
       oosST.flush()
       
+      // Receive ACK and throw it away
+      oisST.readObject.asInstanceOf[Int]
+      
       // Shut stuff down
       oisST.close()
       oosST.close()
@@ -635,6 +638,9 @@ extends Shuffle[K, V, C] with Logging {
       oosST.writeObject(shuffleUUID)
       oosST.flush()
       
+      // Receive ACK and throw it away
+      oisST.readObject.asInstanceOf[Int]
+
       // Shut stuff down
       oisST.close()
       oosST.close()
