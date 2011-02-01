@@ -41,6 +41,15 @@ CLASSPATH+=:$FWDIR/third_party/asm-3.2/lib/all/asm-all-3.2.jar
 CLASSPATH+=:$FWDIR/third_party/colt.jar
 CLASSPATH+=:$FWDIR/third_party/guava-r07/guava-r07.jar
 CLASSPATH+=:$FWDIR/third_party/hadoop-0.20.0/hadoop-0.20.0-core.jar
+CLASSPATH+=:$FWDIR/third_party/hive-serde-0.6.0.jar
+CLASSPATH+=:$FWDIR/third_party/hive-metastore-0.6.0.jar
+CLASSPATH+=:$FWDIR/third_party/hive-common-0.6.0.jar
+if [ "x$HIVE_HOME" != "x" ]; then
+  CLASSPATH+=:$HIVE_HOME/conf
+  for i in $HIVE_HOME/lib/*.jar; do
+    CLASSPATH+=:$i
+  done
+fi
 CLASSPATH+=:$FWDIR/third_party/scalatest-1.2/scalatest-1.2.jar
 CLASSPATH+=:$FWDIR/third_party/scalacheck_2.8.0-1.7.jar
 CLASSPATH+=:$FWDIR/third_party/jetty-7.1.6.v20100715/jetty-server-7.1.6.v20100715.jar

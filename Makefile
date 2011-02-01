@@ -8,6 +8,7 @@ JARS += third_party/colt.jar
 JARS += third_party/guava-r07/guava-r07.jar
 JARS += third_party/hadoop-0.20.0/hadoop-0.20.0-core.jar
 JARS += third_party/hadoop-0.20.0/lib/commons-logging-1.0.4.jar
+JARS += third_party/hive-serde-0.6.0.jar
 JARS += third_party/scalatest-1.2/scalatest-1.2.jar
 JARS += third_party/scalacheck_2.8.0-1.7.jar
 JARS += third_party/jetty-7.1.6.v20100715/jetty-server-7.1.6.v20100715.jar
