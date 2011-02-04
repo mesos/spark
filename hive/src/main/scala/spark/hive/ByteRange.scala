@@ -47,6 +47,22 @@ class ByteRange(val bytes: Array[Byte], val start: Int, val end: Int) {
   def encodesNull: Boolean = {
     length == 2 && bytes(start) == '\\' && bytes(start + 1) == 'N'
   }
+
+  def parseString: Option[String] = {
+    if (encodesNull) None else Some(decodeString)
+  }
+
+  def parseInt: Option[Int] = {
+    if (encodesNull) None else Some(decodeInt)
+  }
+
+  def parseLong: Option[Long] = {
+    if (encodesNull) None else Some(decodeLong)
+  }
+
+  def parseDouble: Option[Double] = {
+    if (encodesNull) None else Some(decodeDouble)
+  }
 }
 
 // Pattern matching object for extracting a String from a Hive field

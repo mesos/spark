@@ -6,7 +6,7 @@ import java.io._
 
 case class Field(name: String, fieldType: Type)
 
-sealed case class Type
+sealed trait Type
 case class Atom(scalaType: String) extends Type
 case class ArrayType(elemType: Type) extends Type
 case class MapType(keyType: Type, valueType: Type) extends Type
@@ -94,8 +94,12 @@ class StubGenerator {
 
   def writeClass(out: Writer, name: String, fields: List[Field],
                  whitelist: Seq[String], indent: String = "") {
+    def write(text: String, args: Any*) {
+      out.write(indent + text.format(args: _*))
+    }
     def writeln(text: String, args: Any*) {
-      out.write(indent + text.format(args: _*) + "\n")
+      write(text, args: _*)
+      write("\n")
     }
 
     writeln("class " + name + " {")
@@ -105,20 +109,22 @@ class StubGenerator {
       writeln("  val " + name + ": " + scalaType(type_, name))
     }
 
-    writeln("}\n\n")
+    writeln("}\n")
 
     writeln("object " + name + " {")
 
     // Print read method
     writeln("  def read(range: ByteRange, sep: Byte = 1): Option[%s] {", name)
     writeln("    val ranges = range.split(sep)")
-    writeln("    if (ranges.size == %d) {", fields.size)
+    writeln("    if (ranges.size == %d) {", fields.size) // TODO: Use max index among our fields
     for ((Field(name, type_), index) <- fields.zipWithIndex if whitelist.contains(name)) {
-      writeln("      val %s: Option[%s] = %s", name, scalaType(type_, name),
-          readCode(name, type_, "ranges(" + index + ")", "sep"))
+      write("      val %s: Option[%s] = ", name, scalaType(type_, name))
+      writeReadCode(out, name, type_, "ranges(" + index + ")", "sep", indent + "      ")
+      writeln("")
       writeln("      if (%s == None) return None", name)
     }
-    writeln("      return new %s(%s)", name, fields.map(_.name + ".get").mkString(", "))
+    writeln("      return new %s(%s)", name,
+      fields.filter(whitelist.contains(_)).map(_.name + ".get").mkString(", "))
     writeln("    }")
     writeln("    return None")
     writeln("  }")
@@ -139,19 +145,34 @@ class StubGenerator {
     writeln("}")
   }
 
-  // Generate read code for a given field (should really be made a write* call)
-  def readCode(name: String, type_ : Type, range: String, sep: String): String = type_ match {
-    case Atom(t) => "%sField.unapply(%s)".format(t, range)
-    case Struct(t) => "%s.read(%s, %s + 1)".format(name.capitalize, range, sep)
-    case ArrayType(t) => """{
-      val parts = %s.split(%s + 1)
-      val objs = parts.map(x => %s)
-      if (objs.count(_ == None) > 0)
-        None
-      else
-        Some(Array[%s](objs.flatten: _*))
-    }""".format(range, sep, readCode(name, t, "x", "sep + 1"), scalaType(type_, name))
-    case _ => "UNSUPPORTED"
+  // Generate read code for a given field (TODO: should really be made a write* call)
+  def writeReadCode(out: Writer, name: String, type_ : Type, range: String,
+                    sep: String, indent: String) {
+    def write(text: String, args: Any*) {
+      out.write(indent + text.format(args: _*))
+    }
+    def writeln(text: String, args: Any*) {
+      write(text, args: _*)
+      out.write("\n")
+    }
+    type_ match {
+      case Atom(t) =>
+        out.write("%s.parse%s".format(range, t))
+      case Struct(t) =>
+        out.write("%s.read(%s, %s + 1)".format(name.capitalize, range, sep))
+      case ArrayType(t) =>
+        out.write("{\n")
+        writeln("  val parts = %s.split(%s + 1)", range, sep)
+        write("  val objs = parts.map(part => ")
+        writeReadCode(out, name, t, "part", sep + " + 1", indent + "    ")
+        out.write(")\n")
+        writeln("  if (objs.count(_ == None) > 0)")
+        writeln("    None")
+        writeln("  else")
+        writeln("    Some(Array[%s](objs.flatten: _*))", scalaType(t, name))
+        write("}")
+      case _ => out.write("UNSUPPORTED")
+    }
   }
 }
 
