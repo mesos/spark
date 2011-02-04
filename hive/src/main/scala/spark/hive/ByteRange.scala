@@ -6,6 +6,10 @@ import org.apache.hadoop.io.Text
 
 import org.apache.hadoop.hive.serde2.`lazy`.LazyInteger
 
+/**
+ * A ByteRange represents a sequence of bytes in a byte array. This class
+ * is used to efficiently refer to sub-arrays without copying data.
+ */
 class ByteRange(val bytes: Array[Byte], val start: Int, val end: Int) {
   def this(bytes: Array[Byte], end: Int) = this(bytes, 0, end)
   
@@ -36,6 +40,8 @@ class ByteRange(val bytes: Array[Byte], val start: Int, val end: Int) {
 
   def decodeInt: Int = LazyInteger.parseInt(bytes, start, length)
 
+  def decodeLong: Long = java.lang.Long.parseLong(decodeString)
+
   def decodeDouble: Double = java.lang.Double.parseDouble(decodeString)
 
   def encodesNull: Boolean = {
@@ -60,6 +66,16 @@ object IntField {
       None
     else
       Some(bytes.decodeInt)
+  }
+}
+
+// Pattern matching object for extracting a Long from a Hive field
+object LongField {
+  def unapply(bytes: ByteRange): Option[Long] = {
+    if (bytes == null || bytes.encodesNull)
+      None
+    else
+      Some(bytes.decodeLong)
   }
 }
 
