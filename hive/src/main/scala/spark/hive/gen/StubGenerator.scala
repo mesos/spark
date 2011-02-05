@@ -60,6 +60,7 @@ class StubGenerator {
       case HiveSchemaParser.Success(fields, _) =>
         out.write("import spark._\n")
         out.write("import spark.hive._\n")
+        out.write("import org.apache.hadoop.io.{BytesWritable, Text}\n")
         out.write("\n")
         writeClass(out, className, fields, whitelist)
         out.flush
@@ -102,29 +103,35 @@ class StubGenerator {
       write("\n")
     }
 
-    writeln("class " + name + " {")
+    writeln("class " + name + " (")
 
     // Print the fields themselves
-    for (Field(name, type_) <- fields if whitelist.contains(name)) {
-      writeln("  val " + name + ": " + scalaType(type_, name))
-    }
+    val fieldDefs = fields.filter(f => whitelist.contains(f.name)).map {
+      case Field(name, type_) => "  val " + name + ": " + scalaType(type_, name)
+    }.mkString(",\n" + indent)
+    writeln(fieldDefs)
 
-    writeln("}\n")
+    writeln(") {}\n")
 
     writeln("object " + name + " {")
 
     // Print read method
     writeln("  def read(range: ByteRange, sep: Byte = 1): Option[%s] {", name)
     writeln("    val ranges = range.split(sep)")
-    writeln("    if (ranges.size == %d) {", fields.size) // TODO: Use max index among our fields
+    val indices = for {
+      (Field(name, _), index) <- fields.zipWithIndex
+      if whitelist.contains(name)
+    } yield { index }
+    val minSize = if (indices.size == 0) 0 else indices.max + 1
+    writeln("    if (ranges.size >= %d) {", minSize)
     for ((Field(name, type_), index) <- fields.zipWithIndex if whitelist.contains(name)) {
       write("      val %s: Option[%s] = ", name, scalaType(type_, name))
       writeReadCode(out, name, type_, "ranges(" + index + ")", "sep", indent + "      ")
       writeln("")
       writeln("      if (%s == None) return None", name)
     }
-    writeln("      return new %s(%s)", name,
-      fields.filter(whitelist.contains(_)).map(_.name + ".get").mkString(", "))
+    writeln("      return Some(new %s(%s))", name,
+      fields.filter(f => whitelist.contains(f.name)).map(_.name + ".get").mkString(", "))
     writeln("    }")
     writeln("    return None")
     writeln("  }")
