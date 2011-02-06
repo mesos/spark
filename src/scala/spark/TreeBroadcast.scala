@@ -16,7 +16,7 @@ extends Broadcast[T] with Logging {
     TreeBroadcast.values.put (uuid, value_) 
   }
    
-  @transient var arrayOfBlocks: Array[BroadcastBlock] = null
+  @transient var arrayOfBytes: Array[Byte] = null
   @transient var totalBytes = -1
   @transient var totalBlocks = -1
   @transient var hasBlocks = 0
@@ -59,7 +59,7 @@ extends Broadcast[T] with Logging {
     
     // Prepare the value being broadcasted
     // TODO: Refactoring and clean-up required here
-    arrayOfBlocks = variableInfo.arrayOfBlocks
+    arrayOfBytes = variableInfo.arrayOfBytes
     totalBytes = variableInfo.totalBytes
     totalBlocks = variableInfo.totalBlocks
     hasBlocks = variableInfo.totalBlocks      
@@ -135,7 +135,7 @@ extends Broadcast[T] with Logging {
   }
   
   private def initializeSlaveVariables: Unit = {
-    arrayOfBlocks = null
+    arrayOfBytes = null
     totalBytes = -1
     totalBlocks = -1
     hasBlocks = 0
@@ -156,41 +156,22 @@ extends Broadcast[T] with Logging {
     val baos = new ByteArrayOutputStream
     val oos = new ObjectOutputStream (baos)
     oos.writeObject (obj)
-    oos.close()
-    baos.close()
+    oos.close
+    baos.close
     val byteArray = baos.toByteArray
-    val bais = new ByteArrayInputStream (byteArray)
     
     var blockNum = (byteArray.length / blockSize) 
     if (byteArray.length % blockSize != 0) 
       blockNum += 1      
       
-    var retVal = new Array[BroadcastBlock] (blockNum)
-    var blockID = 0
-
-    for (i <- 0 until (byteArray.length, blockSize)) {    
-      val thisBlockSize = Math.min (blockSize, byteArray.length - i)
-      var tempByteArray = new Array[Byte] (thisBlockSize)
-      val hasRead = bais.read (tempByteArray, 0, thisBlockSize)
-      
-      retVal (blockID) = new BroadcastBlock (blockID, tempByteArray)
-      blockID += 1
-    } 
-    bais.close()
-
-    var variableInfo = VariableInfo (retVal, blockNum, byteArray.length)
+    var variableInfo = VariableInfo (byteArray, blockNum, byteArray.length)
     variableInfo.hasBlocks = blockNum
     
     return variableInfo
   }  
   
   private def unBlockifyObject[A]: A = {
-    var retByteArray = new Array[Byte] (totalBytes)
-    for (i <- 0 until totalBlocks) {
-      System.arraycopy (arrayOfBlocks(i).byteArray, 0, retByteArray, 
-        i * TreeBroadcast.BlockSize, arrayOfBlocks(i).byteArray.length)
-    }    
-    byteArrayToObject (retByteArray)
+    byteArrayToObject (arrayOfBytes)
   }
   
   private def byteArrayToObject[A] (bytes: Array[Byte]): A = {
@@ -294,14 +275,15 @@ extends Broadcast[T] with Logging {
       oosMaster.flush()
 
       // Receive source information from Master        
+      // Receive source information from Master        
       var sourceInfo = oisMaster.readObject.asInstanceOf[SourceInfo]
       totalBlocks = sourceInfo.totalBlocks
-      arrayOfBlocks = new Array[BroadcastBlock] (totalBlocks)
       totalBlocksLock.synchronized {
         totalBlocksLock.notifyAll
       }
       totalBytes = sourceInfo.totalBytes
-      
+      arrayOfBytes = new Array[Byte] (totalBytes)
+
       logInfo ("Received SourceInfo from Master:" + sourceInfo + " My Port: " + listenPort)    
 
       val start = System.nanoTime  
@@ -358,13 +340,20 @@ extends Broadcast[T] with Logging {
       oosSource.flush()
       
       for (i <- hasBlocks until totalBlocks) {
+        // Calculate range to send in bytes
+        val fromByte = i * TreeBroadcast.BlockSize
+        var untilByte = (i + 1) * TreeBroadcast.BlockSize
+        if (untilByte > totalBytes) {
+          untilByte = totalBytes
+        }
+        val numBytes = untilByte - fromByte      
+      
         val recvStartTime = System.currentTimeMillis
-        val bcBlock = oisSource.readObject.asInstanceOf[BroadcastBlock]
+        oisSource.readFully(arrayOfBytes, fromByte, numBytes)
         val receptionTime = (System.currentTimeMillis - recvStartTime)
         
-        logInfo ("Received block: " + bcBlock.blockID + " from " + sourceInfo + " in " + receptionTime + " millis.")
+        logInfo ("Received block: " + i + " from " + sourceInfo + " in " + receptionTime + " millis.")
 
-        arrayOfBlocks(hasBlocks) = bcBlock
         hasBlocks += 1
         // Set to true if at least one block is received
         receptionSucceeded = true
@@ -679,7 +668,7 @@ extends Broadcast[T] with Logging {
             stopBroadcast = true
           } else {
             // Carry on
-            sendObject
+            sendBlock
           }
         } catch {
           // If something went wrong, e.g., the worker at the other end died etc. 
@@ -695,7 +684,7 @@ extends Broadcast[T] with Logging {
         }
       }
 
-      private def sendObject: Unit = {
+      private def sendBlock: Unit = {
         // Wait till receiving the SourceInfo from Master
         while (totalBlocks == -1) { 
           totalBlocksLock.synchronized {
@@ -710,8 +699,16 @@ extends Broadcast[T] with Logging {
             }
           }
           try {
-            oos.writeObject (arrayOfBlocks(i))
-            oos.flush()
+            // Calculate range to send in bytes
+            val fromByte = i * TreeBroadcast.BlockSize
+            var untilByte = (i + 1) * TreeBroadcast.BlockSize
+            if (untilByte > totalBytes) {
+              untilByte = totalBytes
+            }
+            val numBytes = untilByte - fromByte
+          
+            oos.write (arrayOfBytes, fromByte, numBytes)
+            oos.flush
           } catch {
             case e: Exception => { 
               logInfo ("sendObject had a " + e)

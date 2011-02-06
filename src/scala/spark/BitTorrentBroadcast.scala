@@ -17,7 +17,7 @@ extends Broadcast[T] with Logging {
     BitTorrentBroadcast.values.put (uuid, value_) 
   }
    
-  @transient var arrayOfBlocks: Array[BroadcastBlock] = null
+  @transient var arrayOfBytes: Array[Byte] = null
   @transient var hasBlocksBitVector: BitSet = null
   @transient var numCopiesSent: Array[Int] = null
   @transient var totalBytes = -1
@@ -69,7 +69,7 @@ extends Broadcast[T] with Logging {
     
     // Prepare the value being broadcasted
     // TODO: Refactoring and clean-up required here
-    arrayOfBlocks = variableInfo.arrayOfBlocks
+    arrayOfBytes = variableInfo.arrayOfBytes
     totalBytes = variableInfo.totalBytes
     totalBlocks = variableInfo.totalBlocks
     hasBlocks = variableInfo.totalBlocks
@@ -162,7 +162,7 @@ extends Broadcast[T] with Logging {
   
   // Initialize variables in the worker node. Master sends everything as 0/null 
   private def initializeWorkerVariables: Unit = {
-    arrayOfBlocks = null
+    arrayOfBytes = null
     hasBlocksBitVector = null
     numCopiesSent = null
     totalBytes = -1
@@ -193,38 +193,19 @@ extends Broadcast[T] with Logging {
     oos.close
     baos.close
     val byteArray = baos.toByteArray
-    val bais = new ByteArrayInputStream (byteArray)
     
     var blockNum = (byteArray.length / blockSize) 
     if (byteArray.length % blockSize != 0) 
       blockNum += 1      
       
-    var retVal = new Array[BroadcastBlock] (blockNum)
-    var blockID = 0
-
-    for (i <- 0 until (byteArray.length, blockSize)) {
-      val thisBlockSize = Math.min (blockSize, byteArray.length - i)
-      var tempByteArray = new Array[Byte] (thisBlockSize)
-      val hasRead = bais.read (tempByteArray, 0, thisBlockSize)
-      
-      retVal (blockID) = new BroadcastBlock (blockID, tempByteArray)
-      blockID += 1
-    } 
-    bais.close
-
-    var variableInfo = VariableInfo (retVal, blockNum, byteArray.length)
+    var variableInfo = VariableInfo (byteArray, blockNum, byteArray.length)
     variableInfo.hasBlocks = blockNum
     
     return variableInfo
   }  
   
   private def unBlockifyObject[A]: A = {
-    var retByteArray = new Array[Byte] (totalBytes)
-    for (i <- 0 until totalBlocks) {
-      System.arraycopy (arrayOfBlocks(i).byteArray, 0, retByteArray, 
-        i * BitTorrentBroadcast.BlockSize, arrayOfBlocks(i).byteArray.length)
-    }    
-    byteArrayToObject (retByteArray)
+    byteArrayToObject (arrayOfBytes)
   }
   
   private def byteArrayToObject[A] (bytes: Array[Byte]): A = {
@@ -393,13 +374,13 @@ extends Broadcast[T] with Logging {
 
     // Setup initial states of variables
     totalBlocks = gInfo.totalBlocks
-    arrayOfBlocks = new Array[BroadcastBlock] (totalBlocks)
     hasBlocksBitVector = new BitSet (totalBlocks)
     numCopiesSent = new Array[Int] (totalBlocks)
     totalBlocksLock.synchronized {
       totalBlocksLock.notifyAll
     }
     totalBytes = gInfo.totalBytes
+    arrayOfBytes = new Array[Byte] (totalBytes)
       
     // Start ttGuide to periodically talk to the Guide 
     var ttGuide = new TalkToGuide (gInfo)
@@ -575,36 +556,37 @@ extends Broadcast[T] with Logging {
               oosSource.writeObject(blockToAskFor)
               oosSource.flush
               
+              // Calculate range to send in bytes
+              val fromByte = blockToAskFor * BitTorrentBroadcast.BlockSize
+              var untilByte = (blockToAskFor + 1) * BitTorrentBroadcast.BlockSize
+              if (untilByte > totalBytes) {
+                untilByte = totalBytes
+              }
+              val numBytes = untilByte - fromByte      
+
               // Receive the requested block
               val recvStartTime = System.currentTimeMillis
-              val bcBlock = oisSource.readObject.asInstanceOf[BroadcastBlock]
+              oisSource.readFully(arrayOfBytes, fromByte, numBytes)
               val receptionTime = (System.currentTimeMillis - recvStartTime)
               
-              // Expecting sender to send the block that was asked for
-              assert (bcBlock.blockID == blockToAskFor)
+              logInfo ("Received block: " + blockToAskFor + " from " + peerToTalkTo + " in " + receptionTime + " millis.")
+
+              // Update the hasBlocksBitVector first
+              hasBlocksBitVector.synchronized {
+                hasBlocksBitVector.set (blockToAskFor)
+                hasBlocks += 1
+              }
               
-              logInfo ("Received block: " + bcBlock.blockID + " from " + peerToTalkTo + " in " + receptionTime + " millis.")
+              rxSpeeds.addDataPoint (peerToTalkTo, receptionTime)
 
-              if (!hasBlocksBitVector.get(bcBlock.blockID)) {
-                arrayOfBlocks(bcBlock.blockID) = bcBlock
-                
-                // Update the hasBlocksBitVector first
-                hasBlocksBitVector.synchronized {
-                  hasBlocksBitVector.set (bcBlock.blockID)
-                  hasBlocks += 1
-                }
-                
-                rxSpeeds.addDataPoint (peerToTalkTo, receptionTime)
+              // blockToAskFor has arrived. Not in request any more
+              // Probably no need to update it though
+              blocksInRequestBitVector.synchronized {
+                blocksInRequestBitVector.set (blockToAskFor, false)
+              }
 
-                // blockToAskFor has arrived. Not in request any more
-                // Probably no need to update it though
-                blocksInRequestBitVector.synchronized {
-                  blocksInRequestBitVector.set (bcBlock.blockID, false)
-                }
-
-                // Reset blockToAskFor to -1. Else it will be considered missing
-                blockToAskFor = -1
-              }              
+              // Reset blockToAskFor to -1. Else it will be considered missing
+              blockToAskFor = -1
               
               // Send the latest SourceInfo
               oosSource.writeObject(getLocalSourceInfo)
@@ -1019,7 +1001,15 @@ extends Broadcast[T] with Logging {
       
       private def sendBlock (blockToSend: Int): Unit = {
         try {
-          oos.writeObject (arrayOfBlocks(blockToSend))
+          // Calculate range to send in bytes
+          val fromByte = blockToSend * BitTorrentBroadcast.BlockSize
+          var untilByte = (blockToSend + 1) * BitTorrentBroadcast.BlockSize
+          if (untilByte > totalBytes) {
+            untilByte = totalBytes
+          }
+          val numBytes = untilByte - fromByte
+        
+          oos.write (arrayOfBytes, fromByte, numBytes)
           oos.flush
         } catch { 
           case e: Exception => { 
