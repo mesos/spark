@@ -566,7 +566,9 @@ extends Broadcast[T] with Logging {
 
               // Receive the requested block
               val recvStartTime = System.currentTimeMillis
-              oisSource.readFully(arrayOfBytes, fromByte, numBytes)
+              arrayOfBytes.synchronized { 
+                oisSource.readFully(arrayOfBytes, fromByte, numBytes)
+              }
               val receptionTime = (System.currentTimeMillis - recvStartTime)
               
               logInfo ("Received block: " + blockToAskFor + " from " + peerToTalkTo + " in " + receptionTime + " millis.")
@@ -1008,8 +1010,10 @@ extends Broadcast[T] with Logging {
             untilByte = totalBytes
           }
           val numBytes = untilByte - fromByte
-        
-          oos.write (arrayOfBytes, fromByte, numBytes)
+          
+          arrayOfBytes.synchronized {
+            oos.write (arrayOfBytes, fromByte, numBytes)
+          }
           oos.flush
         } catch { 
           case e: Exception => { 
