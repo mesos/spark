@@ -575,8 +575,10 @@ extends Broadcast[T] with Logging {
 
               // Update the hasBlocksBitVector first
               hasBlocksBitVector.synchronized {
-                hasBlocksBitVector.set (blockToAskFor)
-                hasBlocks += 1
+                if (!hasBlocksBitVector.get (blockToAskFor)) {
+                  hasBlocksBitVector.set (blockToAskFor)
+                  hasBlocks += 1
+                }
               }
               
               rxSpeeds.addDataPoint (peerToTalkTo, receptionTime)
