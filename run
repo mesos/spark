@@ -60,9 +60,9 @@ for jar in $CORE_DIR/lib/hadoop-0.20.0/lib/*.jar; do
 done
 # Add Hive project and its dependencies
 CLASSPATH+=:$HIVE_DIR/target/scala_2.8.1/classes
-CLASSPATH+=:$HIVE_DIR/lib/hive-serde-0.6.0.jar
-CLASSPATH+=:$HIVE_DIR/lib/hive-metastore-0.6.0.jar
-CLASSPATH+=:$HIVE_DIR/lib/hive-common-0.6.0.jar
+CLASSPATH+=:$HIVE_DIR/lib/hive-0.6.0/hive-serde-0.6.0.jar
+CLASSPATH+=:$HIVE_DIR/lib/hive-0.6.0/hive-metastore-0.6.0.jar
+CLASSPATH+=:$HIVE_DIR/lib/hive-0.6.0/hive-common-0.6.0.jar
 if [ "x$HIVE_HOME" != "x" ]; then
   CLASSPATH+=:$HIVE_HOME/conf
   for i in $HIVE_HOME/lib/*.jar; do
