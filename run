@@ -59,6 +59,7 @@ for jar in $CORE_DIR/lib/hadoop-0.20.0/lib/*.jar; do
   CLASSPATH+=:$jar
 done
 # Add Hive project and its dependencies
+CLASSPATH+=:$HIVE_DIR/target/scala_2.8.1/classes
 CLASSPATH+=:$HIVE_DIR/lib/hive-serde-0.6.0.jar
 CLASSPATH+=:$HIVE_DIR/lib/hive-metastore-0.6.0.jar
 CLASSPATH+=:$HIVE_DIR/lib/hive-common-0.6.0.jar
