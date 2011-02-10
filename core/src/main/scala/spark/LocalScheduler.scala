@@ -1,5 +1,6 @@
 package spark
 
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent._
 
 import scala.collection.mutable.Map
@@ -19,6 +20,8 @@ private class LocalScheduler(threads: Int) extends Scheduler with Logging {
       : Array[T] = {
     val futures = new Array[Future[TaskResult[T]]](tasks.length)
     
+    val numFinished = new AtomicInteger(0)
+
     for (i <- 0 until tasks.length) {
       futures(i) = threadPool.submit(new Callable[TaskResult[T]]() {
         def call(): TaskResult[T] = {
@@ -26,15 +29,16 @@ private class LocalScheduler(threads: Int) extends Scheduler with Logging {
           try {
             // Serialize and deserialize the task so that accumulators are
             // changed to thread-local ones; this adds a bit of unnecessary
-            // overhead but matches how the Nexus Executor works
+            // overhead but matches how the Mesos executor works
             Accumulators.clear
             val bytes = Utils.serialize(tasks(i))
-            logInfo("Size of task " + i + " is " + bytes.size + " bytes")
+            logDebug("Serialized size: " + bytes.size)
             val task = Utils.deserialize[Task[T]](
               bytes, currentThread.getContextClassLoader)
             val value = task.run
             val accumUpdates = Accumulators.values
-            logInfo("Finished task " + i)
+            logInfo("Finished task %d (progress: %d/%d)".format(
+                i, numFinished.incrementAndGet(), tasks.length))
             new TaskResult[T](value, accumUpdates)
           } catch {
             case e: Exception => {
