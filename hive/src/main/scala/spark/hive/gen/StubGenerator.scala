@@ -73,8 +73,8 @@ class StubGenerator {
     writeln("object " + name + " {")
 
     // Print read method
-    writeln("  def read(range: ByteRange, sep: Byte = 1): Option[%s] {", name)
-    writeln("    val ranges = range.split(sep)")
+    writeln("  def read(range: ByteRange, sep: Int = 1): Option[%s] = {", name)
+    writeln("    val ranges = range.split(sep.toByte)")
     val indices = for {
       (Field(name, _), index) <- fields.zipWithIndex
       if whitelist.contains(name)
@@ -126,7 +126,7 @@ class StubGenerator {
         out.write("%s.read(%s, %s + 1)".format(name.capitalize, range, sep))
       case ArrayType(t) =>
         out.write("{\n")
-        writeln("  val parts = %s.split(%s + 1)", range, sep)
+        writeln("  val parts = %s.split((%s + 1).toByte)", range, sep)
         write("  val objs = parts.map(part => ")
         writeReadCode(out, name, t, "part", sep + " + 1", indent + "    ")
         out.write(")\n")
