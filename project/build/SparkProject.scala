@@ -80,4 +80,7 @@ trait DepJar extends AssemblyBuilder {
       depJarOutputPath,
       packageOptions)
   }.dependsOn(compile).describedAs("Bundle project's dependencies into a JAR.")
+
+  override def assemblyJarName =
+    name.toLowerCase.replace(" ", "-") + "-assembly-" + this.version + ".jar"
 }

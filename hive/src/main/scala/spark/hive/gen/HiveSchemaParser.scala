@@ -4,8 +4,6 @@ import scala.util.parsing.combinator._
 import scala.io.Source
 import java.io._
 
-case class Field(name: String, fieldType: Type)
-
 object HiveSchemaParser extends RegexParsers {
   def name: Parser[String] = """[a-zA-Z0-9_]+""".r
 
