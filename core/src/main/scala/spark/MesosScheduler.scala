@@ -263,11 +263,13 @@ extends MScheduler with spark.Scheduler with Logging
     // Copy each JAR to a unique filename in the jarDir
     for ((path, index) <- sc.jars.zipWithIndex) {
       val file = new File(path)
-      val filename = index + "_" + file.getName
-      val f = new File(jarDir, filename)
-      copyFile(file, f)
-      local_urls += f.toURI.toURL  // Recommended workaround
-      filenames += filename
+      if(file.exists) {
+        val filename = index + "_" + file.getName
+        val f = new File(jarDir, filename)
+        copyFile(file, f)
+        local_urls += f.toURI.toURL  // Recommended workaround
+        filenames += filename
+      }
     }
     // Create the server
     jarServer = new HttpServer(jarDir)
