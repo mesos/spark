@@ -40,7 +40,10 @@ extends Broadcast[T] with Logging {
         logInfo( "Started reading Broadcasted variable " + uuid)
         val start = System.nanoTime
         
-        val fileIn = new ObjectInputStream(DfsBroadcast.openFileForReading(uuid))
+        val fileIn = new ObjectInputStream(DfsBroadcast.openFileForReading(uuid)){
+           override def resolveClass(desc: ObjectStreamClass) =
+             Class.forName(desc.getName, false, currentThread.getContextClassLoader)
+         }
         value_ = fileIn.readObject.asInstanceOf[T]
         DfsBroadcast.values.put(uuid, value_)
         fileIn.close

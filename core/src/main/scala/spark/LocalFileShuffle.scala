@@ -71,7 +71,10 @@ class LocalFileShuffle[K, V, C] extends Shuffle[K, V, C] with Logging {
       for ((serverUri, inputIds) <- Utils.shuffle(splitsByUri)) {
         for (i <- inputIds) {
           val url = "%s/shuffle/%d/%d/%d".format(serverUri, shuffleId, i, myId)
-          val inputStream = new ObjectInputStream(new URL(url).openStream())
+          val inputStream = new ObjectInputStream(new URL(url).openStream()){
+           override def resolveClass(desc: ObjectStreamClass) =
+             Class.forName(desc.getName, false, currentThread.getContextClassLoader)
+         }
           try {
             while (true) {
               val (k, c) = inputStream.readObject().asInstanceOf[(K, C)]
