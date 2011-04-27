@@ -166,7 +166,7 @@ extends Broadcast[T] with Logging {
     var blockID = 0
 
     for (i <- 0 until (byteArray.length, blockSize)) {    
-      val thisBlockSize = Math.min (blockSize, byteArray.length - i)
+      val thisBlockSize = math.min (blockSize, byteArray.length - i)
       var tempByteArray = new Array[Byte] (thisBlockSize)
       val hasRead = bais.read (tempByteArray, 0, thisBlockSize)
       
@@ -191,7 +191,10 @@ extends Broadcast[T] with Logging {
   }
   
   private def byteArrayToObject[A] (bytes: Array[Byte]): A = {
-    val in = new ObjectInputStream (new ByteArrayInputStream (bytes))
+    val in = new ObjectInputStream (new ByteArrayInputStream (bytes)){
+           override def resolveClass(desc: ObjectStreamClass) =
+             Class.forName(desc.getName, false, currentThread.getContextClassLoader)
+         }
     val retVal = in.readObject.asInstanceOf[A]
     in.close
     return retVal
