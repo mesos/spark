@@ -6,28 +6,55 @@ import assembly._
 import de.element34.sbteclipsify._
 
 
-class SparkProject(info: ProjectInfo)
-extends ParentProject(info) with IdeaProject
-{
+class SparkProject(info: ProjectInfo) extends ParentProject(info) with IdeaProject {
+
   lazy val core = project("core", "Spark Core", new CoreProject(_))
 
-  lazy val examples =
-    project("examples", "Spark Examples", new ExamplesProject(_), core)
+  lazy val repl = project("repl", "Spark REPL", new ReplProject(_), core)
 
-  lazy val hive =
-    project("hive", "Spark Hive", new HiveProject(_), core)
+  lazy val examples = project("examples", "Spark Examples", new ExamplesProject(_), core)
 
-  class CoreProject(info: ProjectInfo)
-  extends DefaultProject(info) with Eclipsify with IdeaProject with DepJar with XmlTestReport
-  {}
+  lazy val bagel = project("bagel", "Bagel", new BagelProject(_), core)
 
-  class ExamplesProject(info: ProjectInfo)
-  extends DefaultProject(info) with Eclipsify with IdeaProject
-  {}
+  lazy val hive = project("hive", "Hive", new HiveProject(_), core)
+
+  lazy val jettyWebapp = "org.eclipse.jetty" % "jetty-webapp" % "7.4.1.v20110513" % "provided"
+
+  trait BaseProject extends BasicScalaProject with ScalaPaths with BasicPackagePaths with Eclipsify with IdeaProject {
+    override def compileOptions = super.compileOptions ++ Seq(Unchecked)
+
+    lazy val jettyServer = "org.eclipse.jetty" % "jetty-server" % "7.4.2.v20110526"
+    
+    override def packageDocsJar = defaultJarPath("-javadoc.jar")
+    override def packageSrcJar= defaultJarPath("-sources.jar")
+    lazy val sourceArtifact = Artifact.sources(artifactID)
+    lazy val docsArtifact = Artifact.javadoc(artifactID)
+    override def packageToPublishActions = super.packageToPublishActions ++ Seq(packageDocs, packageSrc)
+  }
+
+  class CoreProject(info: ProjectInfo) extends DefaultProject(info) with BaseProject with DepJar with XmlTestReport {
+    val guava = "com.google.guava" % "guava" % "r09"
+    val log4j = "log4j" % "log4j" % "1.2.16"
+    val slf4jVersion = "1.6.1"
+    val slf4jApi = "org.slf4j" % "slf4j-api" % slf4jVersion
+    val slf4jLog4j = "org.slf4j" % "slf4j-log4j12" % slf4jVersion
+    val compressLzf = "com.ning" % "compress-lzf" % "0.7.0"
+    val hadoop = "org.apache.hadoop" % "hadoop-core" % "0.20.2"
+    val asm = "asm" % "asm-all" % "3.3.1"
+    val scalaTest = "org.scalatest" % "scalatest" % "1.3" % "test"
+    val scalaCheck = "org.scala-tools.testing" %% "scalacheck" % "1.7" % "test"
+  }
+
+  class ReplProject(info: ProjectInfo) extends DefaultProject(info) with BaseProject with DepJar with XmlTestReport
+
+  class ExamplesProject(info: ProjectInfo) extends DefaultProject(info) with BaseProject {
+    val colt = "colt" % "colt" % "1.2.0"
+  }
 
   class HiveProject(info: ProjectInfo)
-  extends DefaultProject(info) with Eclipsify with IdeaProject with DepJar
-  {}
+  extends DefaultProject(info) with BaseProject with DepJar
+
+  class BagelProject(info: ProjectInfo) extends DefaultProject(info) with BaseProject with DepJar with XmlTestReport
 }
 
 
@@ -81,6 +108,5 @@ trait DepJar extends AssemblyBuilder {
       packageOptions)
   }.dependsOn(compile).describedAs("Bundle project's dependencies into a JAR.")
 
-  override def assemblyJarName =
-    name.toLowerCase.replace(" ", "-") + "-assembly-" + this.version + ".jar"
+  override def managedStyle = ManagedStyle.Maven
 }

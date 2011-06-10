@@ -1,6 +1,7 @@
 package spark
 
 import java.io._
+import java.util.concurrent.atomic.AtomicInteger
 
 import scala.collection.mutable.ArrayBuffer
 
@@ -14,6 +15,18 @@ class SparkContext(
   val sparkHome: String = null,
   val jars: Seq[String] = Nil)
 extends Logging {
+  // Set Spark master host and port system properties
+  if (System.getProperty("spark.master.host") == null)
+    System.setProperty("spark.master.host", Utils.localHostName)
+  if (System.getProperty("spark.master.port") == null)
+    System.setProperty("spark.master.port", "50501")
+  
+  // Create the Spark execution environment (cache, map output tracker, etc)
+  val env = SparkEnv.createFromSystemProperties(true)
+  SparkEnv.set(env)
+  Broadcast.initialize(true)
+    
+  // Create and start the scheduler
   private var scheduler: Scheduler = {
     // Regular expression used for local[N] master format
     val LOCAL_N_REGEX = """local\[([0-9]+)\]""".r
@@ -27,13 +40,9 @@ extends Logging {
         new MesosScheduler(this, master, frameworkName)
     }
   }
+  scheduler.start()
 
   private val isLocal = scheduler.isInstanceOf[LocalScheduler]
-
-  // Start the scheduler, the cache and the broadcast system
-  scheduler.start()
-  Cache.initialize()
-  Broadcast.initialize(true)
 
   // Methods for creating RDDs
 
@@ -41,6 +50,12 @@ extends Logging {
     new ParallelArray[T](this, seq, numSlices)
 
   def parallelize[T: ClassManifest](seq: Seq[T]): RDD[T] =
+    parallelize(seq, numCores)
+    
+  def makeRDD[T: ClassManifest](seq: Seq[T], numSlices: Int): RDD[T] =
+    parallelize(seq, numSlices)
+
+  def makeRDD[T: ClassManifest](seq: Seq[T]): RDD[T] =
     parallelize(seq, numCores)
 
   def textFile(path: String): RDD[String] =
@@ -89,8 +104,8 @@ extends Logging {
   }
 
   /** Build the union of a list of RDDs. */
-  def union[T: ClassManifest](rdds: RDD[T]*): RDD[T] =
-    new UnionRDD(this, rdds)
+  //def union[T: ClassManifest](rdds: RDD[T]*): RDD[T] =
+  //  new UnionRDD(this, rdds)
 
   // Methods for creating shared variables
 
@@ -105,6 +120,10 @@ extends Logging {
   def stop() {
      scheduler.stop()
      scheduler = null
+     // TODO: Broadcast.stop(), Cache.stop()?
+     env.mapOutputTracker.stop()
+     env.cacheTracker.stop()
+     SparkEnv.set(null)
   }
 
   // Wait for the scheduler to be registered
@@ -126,19 +145,20 @@ extends Logging {
       None
   }
 
-  // Submit an array of tasks (passed as functions) to the scheduler
-  def runTasks[T: ClassManifest](tasks: Array[() => T]): Array[T] = {
-    runTaskObjects(tasks.map(f => new FunctionTask(f)))
+  private[spark] def runJob[T, U](rdd: RDD[T], func: Iterator[T] => U, partitions: Seq[Int])
+                                 (implicit m: ClassManifest[U])
+      : Array[U] = {
+    logInfo("Starting job...")
+    val start = System.nanoTime
+    val result = scheduler.runJob(rdd, func, partitions)
+    logInfo("Job finished in " + (System.nanoTime - start) / 1e9 + " s")
+    result
   }
 
-  // Run an array of spark.Task objects
-  private[spark] def runTaskObjects[T: ClassManifest](tasks: Seq[Task[T]])
-      : Array[T] = {
-    logInfo("Running " + tasks.length + " tasks in parallel")
-    val start = System.nanoTime
-    val result = scheduler.runTasks(tasks.toArray)
-    logInfo("Tasks finished in " + (System.nanoTime - start) / 1e9 + " s")
-    return result
+  private[spark] def runJob[T, U](rdd: RDD[T], func: Iterator[T] => U)
+                                 (implicit m: ClassManifest[U])
+      : Array[U] = {
+    runJob(rdd, func, 0 until rdd.splits.size)
   }
 
   // Clean a closure to make it ready to serialized and send to tasks
@@ -150,6 +170,19 @@ extends Logging {
 
   // Get the number of cores available to run tasks (as reported by Scheduler)
   def numCores = scheduler.numCores
+
+  private var nextShuffleId = new AtomicInteger(0)
+
+  private[spark] def newShuffleId(): Int = {
+    nextShuffleId.getAndIncrement()
+  }
+  
+  private var nextRddId = new AtomicInteger(0)
+
+  // Register a new RDD, returning its RDD ID
+  private[spark] def newRddId(): Int = {
+    nextRddId.getAndIncrement()
+  }
 }
 
 

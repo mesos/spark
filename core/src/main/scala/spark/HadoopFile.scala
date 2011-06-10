@@ -3,6 +3,7 @@ package spark
 import mesos.SlaveOffer
 
 import org.apache.hadoop.io.LongWritable
+import org.apache.hadoop.io.NullWritable
 import org.apache.hadoop.io.Text
 import org.apache.hadoop.mapred.FileInputFormat
 import org.apache.hadoop.mapred.InputFormat
@@ -14,12 +15,13 @@ import org.apache.hadoop.mapred.Reporter
 import org.apache.hadoop.util.ReflectionUtils
 
 /** A Spark split class that wraps around a Hadoop InputSplit */
-@serializable class HadoopSplit(@transient s: InputSplit)
+@serializable class HadoopSplit(rddId: Int, idx: Int, @transient s: InputSplit)
 extends Split {
   val inputSplit = new SerializableWritable[InputSplit](s)
 
-  // Hadoop gives each split a unique toString value, so use this as our ID
-  override def getId() = "HadoopSplit(" + inputSplit.toString + ")"
+  override def hashCode(): Int = (41 * (41 + rddId) + idx).toInt
+
+  override val index = idx
 }
 
 
@@ -39,7 +41,10 @@ extends RDD[(K, V)](sc) {
     FileInputFormat.setInputPaths(conf, path)
     val inputFormat = createInputFormat(conf)
     val inputSplits = inputFormat.getSplits(conf, sc.numCores)
-    inputSplits.map(x => new HadoopSplit(x): Split).toArray
+    val array = new Array[Split] (inputSplits.size)
+    for (i <- 0 until inputSplits.size)
+      array(i) = new HadoopSplit(id, i, inputSplits(i))
+    array
   }
 
   def createInputFormat(conf: JobConf): InputFormat[K, V] = {
@@ -47,9 +52,18 @@ extends RDD[(K, V)](sc) {
                    .asInstanceOf[InputFormat[K, V]]
   }
 
+  // Helper method for creating a Hadoop Writable, because the commonly used
+  // NullWritable class has no constructor
+  def createWritable[T](clazz: Class[T]): T = {
+    if (clazz == classOf[NullWritable])
+      NullWritable.get().asInstanceOf[T]
+    else
+      clazz.newInstance()
+  }
+
   override def splits = splits_
 
-  override def iterator(theSplit: Split) = new Iterator[(K, V)] {
+  override def compute(theSplit: Split) = new Iterator[(K, V)] {
     val split = theSplit.asInstanceOf[HadoopSplit]
     var reader: RecordReader[K, V] = null
 
@@ -59,8 +73,8 @@ extends RDD[(K, V)](sc) {
     val fmt = createInputFormat(conf)
     reader = fmt.getRecordReader(split.inputSplit.value, conf, Reporter.NULL)
 
-    val key: K = keyClass.newInstance()
-    val value: V = valueClass.newInstance()
+    val key: K = createWritable(keyClass)
+    val value: V = createWritable(valueClass)
     var gotNext = false
     var finished = false
 
@@ -97,6 +111,8 @@ extends RDD[(K, V)](sc) {
     val hadoopSplit = split.asInstanceOf[HadoopSplit]
     hadoopSplit.inputSplit.value.getLocations.filter(_ != "localhost")
   }
+  
+  override val dependencies: List[Dependency[_]] = Nil
 }
 
 

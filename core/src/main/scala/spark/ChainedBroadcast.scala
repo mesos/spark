@@ -166,7 +166,7 @@ extends Broadcast[T] with Logging {
     var blockID = 0
 
     for (i <- 0 until (byteArray.length, blockSize)) {    
-      val thisBlockSize = Math.min (blockSize, byteArray.length - i)
+      val thisBlockSize = math.min (blockSize, byteArray.length - i)
       var tempByteArray = new Array[Byte] (thisBlockSize)
       val hasRead = bais.read (tempByteArray, 0, thisBlockSize)
       
@@ -719,7 +719,7 @@ extends BroadcastFactory {
 
 private object ChainedBroadcast
 extends Logging {
-  val values = Cache.newKeySpace()
+  val values = SparkEnv.get.cache.newKeySpace()
 
   var valueToGuidePortMap = Map[UUID, Int] ()
   
@@ -745,6 +745,9 @@ extends Logging {
   def initialize (isMaster__ : Boolean): Unit = {
     synchronized {
       if (!initialized) {
+        // Fix for issue #42
+        MasterHostAddress_ =
+          System.getProperty ("spark.broadcast.masterHostAddress", "")
         MasterTrackerPort_ = 
           System.getProperty ("spark.broadcast.masterTrackerPort", "22222").toInt
         BlockSize_ = 

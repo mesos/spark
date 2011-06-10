@@ -21,7 +21,7 @@ import mesos._
  */
 private class MesosScheduler(
   sc: SparkContext, master: String, frameworkName: String)
-extends MScheduler with spark.Scheduler with Logging
+extends MScheduler with DAGScheduler with Logging
 {
   // Environment variables to pass to our executors
   val ENV_VARS_TO_SEND_TO_EXECUTORS = Array(
@@ -52,7 +52,7 @@ extends MScheduler with spark.Scheduler with Logging
 
   // URIs of JARs to pass to executor
   var jarUris: String = ""
-
+  
   def newJobId(): Int = this.synchronized {
     val id = nextJobId
     nextJobId += 1
@@ -101,29 +101,27 @@ extends MScheduler with spark.Scheduler with Logging
     new ExecutorInfo(execScript, createExecArg(), params)
   }
 
-  /**
-   * The primary means to submit a job to the scheduler. Given a list of tasks,
-   * runs them and returns an array of the results.
-   */
-  override def runTasks[T: ClassManifest](tasks: Array[Task[T]]): Array[T] = {
+  
+  def submitTasks(tasks: Seq[Task[_]]) {
+    logInfo("Got a job with " + tasks.size + " tasks")
     waitForRegister()
-    val jobId = newJobId()
-    val myJob = new SimpleJob(this, tasks, jobId)
-    try {
-      this.synchronized {
-        activeJobs(jobId) = myJob
-        activeJobsQueue += myJob
-        jobTasks(jobId) = new HashSet()
-      }
-      driver.reviveOffers();
-      return myJob.join();
-    } finally {
-      this.synchronized {
-        activeJobs -= jobId
-        activeJobsQueue.dequeueAll(x => (x == myJob))
-        taskIdToJobId --= jobTasks(jobId)
-        jobTasks.remove(jobId)
-      }
+    this.synchronized {
+      val jobId = newJobId()
+      val myJob = new SimpleJob(this, tasks, jobId)
+      activeJobs(jobId) = myJob
+      activeJobsQueue += myJob
+      logInfo("Adding job with ID " + jobId)
+      jobTasks(jobId) = new HashSet()
+    }
+    driver.reviveOffers();
+  }
+  
+  def jobFinished(job: Job) {
+    this.synchronized {
+      activeJobs -= job.getId
+      activeJobsQueue.dequeueAll(x => (x == job))
+      taskIdToJobId --= jobTasks(job.getId)
+      jobTasks.remove(job.getId)
     }
   }
 
@@ -199,10 +197,12 @@ extends MScheduler with spark.Scheduler with Logging
             }
             if (isFinished(status.getState)) {
               taskIdToJobId.remove(status.getTaskId)
-              jobTasks(jobId) -= status.getTaskId
+              if (jobTasks.contains(jobId))
+                jobTasks(jobId) -= status.getTaskId
             }
           case None =>
-            logInfo("TID " + status.getTaskId + " already finished")
+            logInfo("Ignoring update from TID " + status.getTaskId +
+              " because its job is gone")
         }
       } catch {
         case e: Exception => logError("Exception in statusUpdate", e)
@@ -253,9 +253,11 @@ extends MScheduler with spark.Scheduler with Logging
     // Copy each JAR to a unique filename in the jarDir
     for ((path, index) <- sc.jars.zipWithIndex) {
       val file = new File(path)
-      val filename = index + "_" + file.getName
-      copyFile(file, new File(jarDir, filename))
-      filenames += filename
+      if (file.exists) {
+        val filename = index + "_" + file.getName
+        copyFile(file, new File(jarDir, filename))
+        filenames += filename
+      }
     }
     // Create the server
     jarServer = new HttpServer(jarDir)
