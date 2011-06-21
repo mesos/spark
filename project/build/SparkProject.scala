@@ -51,10 +51,11 @@ class SparkProject(info: ProjectInfo) extends ParentProject(info) with IdeaProje
     val colt = "colt" % "colt" % "1.2.0"
   }
 
-  class HiveProject(info: ProjectInfo)
-  extends DefaultProject(info) with BaseProject with DepJar
+  class HiveProject(info: ProjectInfo) extends DefaultProject(info) with BaseProject with DepJar
 
   class BagelProject(info: ProjectInfo) extends DefaultProject(info) with BaseProject with DepJar with XmlTestReport
+
+  override def managedStyle = ManagedStyle.Maven
 }
 
 
@@ -107,6 +108,4 @@ trait DepJar extends AssemblyBuilder {
       depJarOutputPath,
       packageOptions)
   }.dependsOn(compile).describedAs("Bundle project's dependencies into a JAR.")
-
-  override def managedStyle = ManagedStyle.Maven
 }
