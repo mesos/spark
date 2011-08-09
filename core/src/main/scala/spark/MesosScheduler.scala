@@ -320,9 +320,9 @@ extends MScheduler with DAGScheduler with Logging
     // Build up the jar URI list
     val serverUri = jarServer.uri
     jarUris = filenames.map(f => serverUri + "/" + f).mkString(",")
-    customClassLoader = new URLClassLoader(local_urls.toArray,this.getClass.getClassLoader)
-    logInfo("JAR server started at " + serverUri)
-    logInfo("Using custom class loader")
+//     customClassLoader = new URLClassLoader(local_urls.toArray,this.getClass.getClassLoader)
+//     logInfo("JAR server started at " + serverUri)
+//     logInfo("Using custom class loader")
   }
 
   // Copy a file on the local file system
