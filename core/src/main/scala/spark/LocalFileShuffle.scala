@@ -7,109 +7,7 @@ import java.util.concurrent.atomic.AtomicLong
 
 import scala.collection.mutable.{ArrayBuffer, HashMap}
 
-
-/**
- * A simple implementation of shuffle using local files served through HTTP.
- *
- * TODO: Add support for compression when spark.compress is set to true.
- */
-@serializable
-class LocalFileShuffle[K, V, C] extends Shuffle[K, V, C] with Logging {
-  override def compute(input: RDD[(K, V)],
-                       numOutputSplits: Int,
-                       createCombiner: V => C,
-                       mergeValue: (C, V) => C,
-                       mergeCombiners: (C, C) => C)
-  : RDD[(K, C)] =
-  {
-    val sc = input.sparkContext
-    val shuffleId = LocalFileShuffle.newShuffleId()
-    logInfo("Shuffle ID: " + shuffleId)
-
-    val splitRdd = new NumberedSplitRDD(input)
-    val numInputSplits = splitRdd.splits.size
-
-    // Run a parallel map and collect to write the intermediate data files,
-    // returning a list of inputSplitId -> serverUri pairs
-    val outputLocs = splitRdd.map((pair: (Int, Iterator[(K, V)])) => {
-      val myIndex = pair._1
-      val myIterator = pair._2
-      val buckets = Array.tabulate(numOutputSplits)(_ => new HashMap[K, C])
-      for ((k, v) <- myIterator) {
-        var bucketId = k.hashCode % numOutputSplits
-        if (bucketId < 0) { // Fix bucket ID if hash code was negative
-          bucketId += numOutputSplits
-        }
-        val bucket = buckets(bucketId)
-        bucket(k) = bucket.get(k) match {
-          case Some(c) => mergeValue(c, v)
-          case None => createCombiner(v)
-        }
-      }
-      for (i <- 0 until numOutputSplits) {
-        val file = LocalFileShuffle.getOutputFile(shuffleId, myIndex, i)
-        val out = new ObjectOutputStream(new FileOutputStream(file))
-        buckets(i).foreach(pair => out.writeObject(pair))
-        out.close()
-      }
-      (myIndex, LocalFileShuffle.serverUri)
-    }).collect()
-
-    // Build a hashmap from server URI to list of splits (to facillitate
-    // fetching all the URIs on a server within a single connection)
-    val splitsByUri = new HashMap[String, ArrayBuffer[Int]]
-    for ((inputId, serverUri) <- outputLocs) {
-      splitsByUri.getOrElseUpdate(serverUri, ArrayBuffer()) += inputId
-    }
-
-    // TODO: Could broadcast splitsByUri
-
-    // Return an RDD that does each of the merges for a given partition
-    val indexes = sc.parallelize(0 until numOutputSplits, numOutputSplits)
-    return indexes.flatMap((myId: Int) => {
-      val combiners = new HashMap[K, C]
-      for ((serverUri, inputIds) <- Utils.shuffle(splitsByUri)) {
-        for (i <- inputIds) {
-          val url = "%s/shuffle/%d/%d/%d".format(serverUri, shuffleId, i, myId)
-          val stream = openStream(url,4)
-          val inputStream = new ObjectInputStream(stream){
-           override def resolveClass(desc: ObjectStreamClass) =
-             Class.forName(desc.getName, false, currentThread.getContextClassLoader)
-         }
-          try {
-            while (true) {
-              val (k, c) = inputStream.readObject().asInstanceOf[(K, C)]
-              combiners(k) = combiners.get(k) match {
-                case Some(oldC) => mergeCombiners(oldC, c)
-                case None => c
-              }
-            }
-          } catch {
-            case e: EOFException => {}
-          }
-          inputStream.close()
-        }
-      }
-      combiners
-    })
-  }
-  
-  def openStream(url:String, retries:Int):java.io.InputStream = {
-    if(retries <= 0)
-      new URL(url).openStream()
-    else {
-      try {
-        new URL(url).openStream()
-      } catch {
-        case _ => {
-          logWarning("Opening URL failed (trying again): "+url)
-          openStream(url,retries-1)
-        }
-      }
-    }
-  }
-}
-
+import spark._
 
 object LocalFileShuffle extends Logging {
   private var initialized = false
@@ -132,9 +30,9 @@ object LocalFileShuffle extends Logging {
       while (!foundLocalDir && tries < 10) {
         tries += 1
         try {
-          localDirUuid = UUID.randomUUID()
+          localDirUuid = UUID.randomUUID
           localDir = new File(localDirRoot, "spark-local-" + localDirUuid)
-          if (!localDir.exists()) {
+          if (!localDir.exists) {
             localDir.mkdirs()
             foundLocalDir = true
           }
@@ -150,6 +48,7 @@ object LocalFileShuffle extends Logging {
       shuffleDir = new File(localDir, "shuffle")
       shuffleDir.mkdirs()
       logInfo("Shuffle dir: " + shuffleDir)
+      
       val extServerPort = System.getProperty(
         "spark.localFileShuffle.external.server.port", "-1").toInt
       if (extServerPort != -1) {
@@ -168,6 +67,7 @@ object LocalFileShuffle extends Logging {
         serverUri = server.uri
       }
       initialized = true
+      logInfo("Local URI: " + serverUri)
     }
   }
 

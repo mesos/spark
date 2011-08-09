@@ -5,36 +5,35 @@ import java.util.{HashMap => JHashMap}
 import scala.collection.mutable.ArrayBuffer
 import scala.collection.mutable.HashMap
 
-import mesos._
+import com.google.protobuf.ByteString
+
+import org.apache.mesos._
+import org.apache.mesos.Protos._
 
 
 /**
  * A Job that runs a set of tasks with no interdependencies.
  */
-class SimpleJob[T: ClassManifest](
-  sched: MesosScheduler, tasks: Array[Task[T]], val jobId: Int)
+class SimpleJob(
+  sched: MesosScheduler, tasksSeq: Seq[Task[_]], val jobId: Int)
 extends Job(jobId) with Logging
 {
   // Maximum time to wait to run a task in a preferred location (in ms)
-  val LOCALITY_WAIT = System.getProperty("spark.locality.wait", "3000").toLong
+  val LOCALITY_WAIT = System.getProperty("spark.locality.wait", "5000").toLong
 
-  // CPUs and memory to request per task
-  val CPUS_PER_TASK = System.getProperty("spark.task.cpus", "1").toInt
-  val MEM_PER_TASK = System.getProperty("spark.task.mem", "512").toInt
+  // CPUs to request per task
+  val CPUS_PER_TASK = System.getProperty("spark.task.cpus", "1").toDouble
 
   // Maximum times a task is allowed to fail before failing the job
   val MAX_TASK_FAILURES = 4
 
-  val callingThread = currentThread
+  val callingThread = Thread.currentThread
+  val tasks = tasksSeq.toArray
   val numTasks = tasks.length
-  val results = new Array[T](numTasks)
   val launched = new Array[Boolean](numTasks)
   val finished = new Array[Boolean](numTasks)
   val numFailures = new Array[Int](numTasks)
-  val tidToIndex = HashMap[Int, Int]()
-
-  var allFinished = false
-  val joinLock = new Object() // Used to wait for all tasks to finish
+  val tidToIndex = HashMap[String, Int]()
 
   var tasksLaunched = 0
   var tasksFinished = 0
@@ -81,28 +80,6 @@ extends Job(jobId) with Logging
     allPendingTasks += index
   }
 
-  // Mark the job as finished and wake up any threads waiting on it
-  def setAllFinished() {
-    joinLock.synchronized {
-      allFinished = true
-      joinLock.notifyAll()
-    }
-  }
-
-  // Wait until the job finishes and return its results
-  def join(): Array[T] = {
-    joinLock.synchronized {
-      while (!allFinished) {
-        joinLock.wait()
-      }
-      if (failed) {
-        throw new SparkException(causeOfFailure)
-      } else {
-        return results
-      }
-    }
-  }
-
   // Return the pending tasks list for a given host, or an empty list if
   // there is no map entry for that host
   def getPendingTasksForHost(host: String): ArrayBuffer[Int] = {
@@ -145,19 +122,17 @@ extends Job(jobId) with Logging
   // Does a host count as a preferred location for a task? This is true if
   // either the task has preferred locations and this host is one, or it has
   // no preferred locations (in which we still count the launch as preferred).
-  def isPreferredLocation(task: Task[T], host: String): Boolean = {
+  def isPreferredLocation(task: Task[_], host: String): Boolean = {
     val locs = task.preferredLocations
     return (locs.contains(host) || locs.isEmpty)
   }
 
   // Respond to an offer of a single slave from the scheduler by finding a task
-  def slaveOffer(offer: SlaveOffer, availableCpus: Int, availableMem: Int)
-      : Option[TaskDescription] = {
-    if (tasksLaunched < numTasks && availableCpus >= CPUS_PER_TASK &&
-        availableMem >= MEM_PER_TASK) {
+  def slaveOffer(offer: SlaveOffer, availableCpus: Double): Option[TaskDescription] = {
+    if (tasksLaunched < numTasks && availableCpus >= CPUS_PER_TASK) {
       val time = System.currentTimeMillis
       val localOnly = (time - lastPreferredLaunchTime < LOCALITY_WAIT)
-      val host = offer.getHost
+      val host = offer.getHostname
       findTask(host, localOnly) match {
         case Some(index) => {
           // Found a task; do some bookkeeping and return a Mesos task for it
@@ -168,24 +143,31 @@ extends Job(jobId) with Logging
           val prefStr = if(preferred) "preferred" else "non-preferred"
           val message =
             "Starting task %d:%d as TID %s on slave %s: %s (%s)".format(
-              jobId, index, taskId, offer.getSlaveId, host, prefStr)
+              jobId, index, taskId.getValue, offer.getSlaveId.getValue, host, prefStr)
           logInfo(message)
           // Do various bookkeeping
-          tidToIndex(taskId) = index
-          task.markStarted(offer)
+          tidToIndex(taskId.getValue) = index
           launched(index) = true
           tasksLaunched += 1
           if (preferred)
             lastPreferredLaunchTime = time
           // Create and return the Mesos task object
-          val params = new JHashMap[String, String]
-          params.put("cpus", CPUS_PER_TASK.toString)
-          params.put("mem", MEM_PER_TASK.toString)
+          val cpuRes = Resource.newBuilder()
+                         .setName("cpus")
+                         .setType(Resource.Type.SCALAR)
+                         .setScalar(Resource.Scalar.newBuilder()
+                                      .setValue(CPUS_PER_TASK).build())
+                         .build()
           val serializedTask = Utils.serialize(task)
           logDebug("Serialized size: " + serializedTask.size)
           val taskName = "task %d:%d".format(jobId, index)
-          return Some(new TaskDescription(
-            taskId, offer.getSlaveId, taskName, params, serializedTask))
+          return Some(TaskDescription.newBuilder()
+                        .setTaskId(taskId)
+                        .setSlaveId(offer.getSlaveId)
+                        .setName(taskName)
+                        .addResources(cpuRes)
+                        .setData(ByteString.copyFrom(serializedTask))
+                        .build())
         }
         case _ =>
       }
@@ -208,24 +190,19 @@ extends Job(jobId) with Logging
   }
 
   def taskFinished(status: TaskStatus) {
-    val tid = status.getTaskId
+    val tid = status.getTaskId.getValue
     val index = tidToIndex(tid)
     if (!finished(index)) {
       tasksFinished += 1
-      logInfo("Finished TID %d (progress: %d/%d)".format(
+      logInfo("Finished TID %s (progress: %d/%d)".format(
         tid, tasksFinished, numTasks))
       // Deserialize task result
-      val result = if(sched.customClassLoader==null)
-        Utils.deserialize[TaskResult[T]](status.getData)
-      else
-        Utils.deserialize[TaskResult[T]](status.getData,sched.customClassLoader)
-      results(index) = result.value
-      // Update accumulators
-      Accumulators.add(callingThread, result.accumUpdates)
+      val result = Utils.deserialize[TaskResult[_]](status.getData.toByteArray)
+      sched.taskEnded(tasks(index), Success, result.value, result.accumUpdates)
       // Mark finished and stop if we've finished all the tasks
       finished(index) = true
       if (tasksFinished == numTasks)
-        setAllFinished()
+        sched.jobFinished(this)
     } else {
       logInfo("Ignoring task-finished event for TID " + tid +
         " because task " + index + " is already finished")
@@ -233,15 +210,31 @@ extends Job(jobId) with Logging
   }
 
   def taskLost(status: TaskStatus) {
-    val tid = status.getTaskId
+    val tid = status.getTaskId.getValue
     val index = tidToIndex(tid)
     if (!finished(index)) {
-      logInfo("Lost TID %d (task %d:%d)".format(tid, jobId, index))
+      logInfo("Lost TID %s (task %d:%d)".format(tid, jobId, index))
       launched(index) = false
       tasksLaunched -= 1
-      // Re-enqueue the task as pending
+      // Check if the problem is a map output fetch failure. In that case, this
+      // task will never succeed on any node, so tell the scheduler about it.
+      if (status.getData != null && status.getData.size > 0) {
+        val reason = Utils.deserialize[TaskEndReason](status.getData.toByteArray)
+        reason match {
+          case fetchFailed: FetchFailed =>
+            logInfo("Loss was due to fetch failure from " + fetchFailed.serverUri)
+            sched.taskEnded(tasks(index), fetchFailed, null, null)
+            finished(index) = true
+            tasksFinished += 1
+            if (tasksFinished == numTasks)
+              sched.jobFinished(this)
+            return
+          case _ => {}
+        }
+      }
+      // On other failures, re-enqueue the task as pending for a max number of retries
       addPendingTask(index)
-      // Mark it as failed
+      // Count attempts only on FAILED and LOST state (not on KILLED)
       if (status.getState == TaskState.TASK_FAILED ||
           status.getState == TaskState.TASK_LOST) {
         numFailures(index) += 1
@@ -264,12 +257,9 @@ extends Job(jobId) with Logging
   }
 
   def abort(message: String) {
-    joinLock.synchronized {
-      failed = true
-      causeOfFailure = message
-      // TODO: Kill running tasks if we were not terminated due to a Mesos error
-      // Indicate to any joining thread that we're done
-      setAllFinished()
-    }
+    failed = true
+    causeOfFailure = message
+    // TODO: Kill running tasks if we were not terminated due to a Mesos error
+    sched.jobFinished(this)
   }
 }

@@ -13,8 +13,11 @@ import scala.collection.mutable.Map
 import scala.collection.mutable.Queue
 import scala.collection.JavaConversions._
 
-import mesos.{Scheduler => MScheduler}
-import mesos._
+import com.google.protobuf.ByteString
+
+import org.apache.mesos.{Scheduler => MScheduler}
+import org.apache.mesos._
+import org.apache.mesos.Protos._
 
 /**
  * The main Scheduler implementation, which runs jobs on Mesos. Clients should
@@ -22,7 +25,7 @@ import mesos._
  */
 private class MesosScheduler(
   sc: SparkContext, master: String, frameworkName: String)
-extends MScheduler with spark.Scheduler with Logging
+extends MScheduler with DAGScheduler with Logging
 {
   // Environment variables to pass to our executors
   val ENV_VARS_TO_SEND_TO_EXECUTORS = Array(
@@ -31,15 +34,25 @@ extends MScheduler with spark.Scheduler with Logging
     "SPARK_LIBRARY_PATH"
   )
 
+  // Memory used by each executor (in megabytes)
+  val EXECUTOR_MEMORY = {
+    if (System.getenv("SPARK_MEM") != null)
+      memoryStringToMb(System.getenv("SPARK_MEM"))
+      // TODO: Might need to add some extra memory for the non-heap parts of the JVM
+    else
+      512
+  }
+
   // Lock used to wait for  scheduler to be registered
   private var isRegistered = false
   private val registeredLock = new Object()
 
-  private var activeJobs = new HashMap[Int, Job]
-  private var activeJobsQueue = new Queue[Job]
+  private val activeJobs = new HashMap[Int, Job]
+  private val activeJobsQueue = new Queue[Job]
 
-  private var taskIdToJobId = new HashMap[Int, Int]
-  private var jobTasks = new HashMap[Int, HashSet[Int]]
+  private val taskIdToJobId = new HashMap[String, Int]
+  private val taskIdToSlaveId = new HashMap[String, String]
+  private val jobTasks = new HashMap[Int, HashSet[String]]
 
   // Incrementing job and task IDs
   private var nextJobId = 0
@@ -48,30 +61,24 @@ extends MScheduler with spark.Scheduler with Logging
   // Driver for talking to Mesos
   var driver: SchedulerDriver = null
 
+  // Which nodes we have executors on
+  private val slavesWithExecutors = new HashSet[String]
+
   // JAR server, if any JARs were added by the user to the SparkContext
   var jarServer: HttpServer = null
 
   // URIs of JARs to pass to executor
   var jarUris: String = ""
-
-  /**
-   * Custom class loader to deserialize the client classes.
-   * Loads all the jar files specified by the user from the tmp directory.
-   * @TODO: it means that some classes may be loaded from different class
-   * loaders => investigate if this is some expected behaviours.
-   */
-  var customClassLoader: URLClassLoader = null
-
   def newJobId(): Int = this.synchronized {
     val id = nextJobId
     nextJobId += 1
     return id
   }
 
-  def newTaskId(): Int = {
-    val id = nextTaskId;
+  def newTaskId(): TaskID = {
+    val id = "" + nextTaskId;
     nextTaskId += 1;
-    return id
+    return TaskID.newBuilder().setValue(id).build()
   }
   
   override def start() {
@@ -85,7 +92,13 @@ extends MScheduler with spark.Scheduler with Logging
       override def run {
         val sched = MesosScheduler.this
         sched.driver = new MesosSchedulerDriver(sched, master)
-        sched.driver.run()
+        try {
+          val ret = sched.driver.run()
+          logInfo("driver.run() returned with code " + ret)
+        } catch {
+          case e: Exception =>
+            logError("driver.run() failed", e)
+        }
       }
     }.start
   }
@@ -101,42 +114,56 @@ extends MScheduler with spark.Scheduler with Logging
           "or the SparkContext constructor")
     }
     val execScript = new File(sparkHome, "spark-executor").getCanonicalPath
-    val params = new JHashMap[String, String]
+    val params = Params.newBuilder()
     for (key <- ENV_VARS_TO_SEND_TO_EXECUTORS) {
       if (System.getenv(key) != null) {
-        params("env." + key) = System.getenv(key)
+        params.addParam(Param.newBuilder()
+                          .setKey("env." + key)
+                          .setValue(System.getenv(key))
+                          .build())
       }
     }
-    new ExecutorInfo(execScript, createExecArg(), params)
+    val memory = Resource.newBuilder()
+                   .setName("mem")
+                   .setType(Resource.Type.SCALAR)
+                   .setScalar(Resource.Scalar.newBuilder()
+                                .setValue(EXECUTOR_MEMORY).build())
+                   .build()
+    ExecutorInfo.newBuilder()
+      .setExecutorId(ExecutorID.newBuilder().setValue("default").build())
+      .setUri(execScript)
+      .setData(ByteString.copyFrom(createExecArg()))
+      .setParams(params.build())
+      .addResources(memory)
+      .build()
   }
 
-  /**
-   * The primary means to submit a job to the scheduler. Given a list of tasks,
-   * runs them and returns an array of the results.
-   */
-  override def runTasks[T: ClassManifest](tasks: Array[Task[T]]): Array[T] = {
+  
+  def submitTasks(tasks: Seq[Task[_]]) {
+    logInfo("Got a job with " + tasks.size + " tasks")
     waitForRegister()
-    val jobId = newJobId()
-    val myJob = new SimpleJob(this, tasks, jobId)
-    try {
-      this.synchronized {
-        activeJobs(jobId) = myJob
-        activeJobsQueue += myJob
-        jobTasks(jobId) = new HashSet()
-      }
-      driver.reviveOffers();
-      return myJob.join();
-    } finally {
-      this.synchronized {
-        activeJobs -= jobId
-        activeJobsQueue.dequeueAll(x => (x == myJob))
-        taskIdToJobId --= jobTasks(jobId)
-        jobTasks.remove(jobId)
-      }
+    this.synchronized {
+      val jobId = newJobId()
+      val myJob = new SimpleJob(this, tasks, jobId)
+      activeJobs(jobId) = myJob
+      activeJobsQueue += myJob
+      logInfo("Adding job with ID " + jobId)
+      jobTasks(jobId) = new HashSet()
+    }
+    driver.reviveOffers();
+  }
+  
+  def jobFinished(job: Job) {
+    this.synchronized {
+      activeJobs -= job.getId
+      activeJobsQueue.dequeueAll(x => (x == job))
+      taskIdToJobId --= jobTasks(job.getId)
+      taskIdToSlaveId --= jobTasks(job.getId)
+      jobTasks.remove(job.getId)
     }
   }
 
-  override def registered(d: SchedulerDriver, frameworkId: String) {
+  override def registered(d: SchedulerDriver, frameworkId: FrameworkID) {
     logInfo("Registered as framework ID " + frameworkId)
     registeredLock.synchronized {
       isRegistered = true
@@ -156,30 +183,32 @@ extends MScheduler with spark.Scheduler with Logging
    * our active jobs for tasks in FIFO order. We fill each node with tasks in
    * a round-robin manner so that tasks are balanced across the cluster.
    */
-  override def resourceOffer(
-      d: SchedulerDriver, oid: String, offers: JList[SlaveOffer]) {
+  override def resourceOffer(d: SchedulerDriver, oid: OfferID, offers: JList[SlaveOffer]) {
     synchronized {
       val tasks = new JArrayList[TaskDescription]
-      val availableCpus = offers.map(_.getParams.get("cpus").toInt)
-      val availableMem = offers.map(_.getParams.get("mem").toInt)
+      val availableCpus = offers.map(o => getResource(o.getResourcesList(), "cpus"))
+      val enoughMem = offers.map(o => {
+        val mem = getResource(o.getResourcesList(), "mem")
+        val slaveId = o.getSlaveId.getValue
+        mem >= EXECUTOR_MEMORY || slavesWithExecutors.contains(slaveId)
+      })
       var launchedTask = false
       for (job <- activeJobsQueue) {
         do {
           launchedTask = false
-          for (i <- 0 until offers.size.toInt) {
-            try {
-              job.slaveOffer(offers(i), availableCpus(i), availableMem(i)) match {
-                case Some(task) =>
-                  tasks.add(task)
-                  taskIdToJobId(task.getTaskId) = job.getId
-                  jobTasks(job.getId) += task.getTaskId
-                  availableCpus(i) -= task.getParams.get("cpus").toInt
-                  availableMem(i) -= task.getParams.get("mem").toInt
-                  launchedTask = true
-                case None => {}
-              }
-            } catch {
-              case e: Exception => logError("Exception in resourceOffer", e)
+          for (i <- 0 until offers.size if enoughMem(i)) {
+            job.slaveOffer(offers(i), availableCpus(i)) match {
+              case Some(task) =>
+                tasks.add(task)
+                val tid = task.getTaskId.getValue
+                val sid = offers(i).getSlaveId.getValue
+                taskIdToJobId(tid) = job.getId
+                jobTasks(job.getId) += tid
+                taskIdToSlaveId(tid) = sid
+                slavesWithExecutors += sid
+                availableCpus(i) -= getResource(task.getResourcesList(), "cpus")
+                launchedTask = true
+              case None => {}
             }
           }
         } while (launchedTask)
@@ -188,6 +217,13 @@ extends MScheduler with spark.Scheduler with Logging
       params.put("timeout", "1")
       d.replyToOffer(oid, tasks, params) // TODO: use smaller timeout?
     }
+  }
+
+  // Helper function to pull out a resource from a Mesos Resources protobuf
+  def getResource(res: JList[Resource], name: String): Double = {
+    for (r <- res if r.getName == name)
+      return r.getScalar.getValue
+    throw new IllegalArgumentException("No resource called " + name + " in " + res)
   }
 
   // Check whether a Mesos task state represents a finished task
@@ -201,17 +237,24 @@ extends MScheduler with spark.Scheduler with Logging
   override def statusUpdate(d: SchedulerDriver, status: TaskStatus) {
     synchronized {
       try {
-        taskIdToJobId.get(status.getTaskId) match {
+        val tid = status.getTaskId.getValue
+        if (status.getState == TaskState.TASK_LOST && taskIdToSlaveId.contains(tid)) {
+          // We lost the executor on this slave, so remember that it's gone
+          slavesWithExecutors -= taskIdToSlaveId(tid)
+        }
+        taskIdToJobId.get(tid) match {
           case Some(jobId) =>
             if (activeJobs.contains(jobId)) {
               activeJobs(jobId).statusUpdate(status)
             }
             if (isFinished(status.getState)) {
-              taskIdToJobId.remove(status.getTaskId)
-              jobTasks(jobId) -= status.getTaskId
+              taskIdToJobId.remove(tid)
+              if (jobTasks.contains(jobId))
+                jobTasks(jobId) -= tid
+              taskIdToSlaveId.remove(tid)
             }
           case None =>
-            logInfo("TID " + status.getTaskId + " already finished")
+            logInfo("Ignoring update from TID " + tid + " because its job is gone")
         }
       } catch {
         case e: Exception => logError("Exception in statusUpdate", e)
@@ -250,8 +293,8 @@ extends MScheduler with spark.Scheduler with Logging
   }
 
   // TODO: query Mesos for number of cores
-  override def numCores() =
-    System.getProperty("spark.default.parallelism", "2").toInt
+  override def defaultParallelism() =
+    System.getProperty("spark.default.parallelism", "8").toInt
 
   // Create a server for all the JARs added by the user to SparkContext.
   // We first copy the JARs to a temp directory for easier server setup.
@@ -306,5 +349,32 @@ extends MScheduler with spark.Scheduler with Logging
     props("spark.jar.uris") = jarUris
     // Serialize the map as an array of (String, String) pairs
     return Utils.serialize(props.toArray)
+  }
+
+  override def frameworkMessage(d: SchedulerDriver, s: SlaveID, e: ExecutorID, b: Array[Byte]) {}
+
+  override def slaveLost(d: SchedulerDriver, s: SlaveID) {
+    slavesWithExecutors.remove(s.getValue)
+  }
+
+  override def offerRescinded(d: SchedulerDriver, o: OfferID) {}
+
+  /**
+   * Convert a Java memory parameter passed to -Xmx (such as 300m or 1g) to a
+   * number of megabytes. This is used to figure out how much memory to claim
+   * from Mesos based on the SPARK_MEM environment variable.
+   */
+  def memoryStringToMb(str: String): Int = {
+    val lower = str.toLowerCase
+    if (lower.endsWith("k"))
+      (lower.substring(0, lower.length-1).toLong / 1024).toInt
+    else if (lower.endsWith("m"))
+      lower.substring(0, lower.length-1).toInt
+    else if (lower.endsWith("g"))
+      lower.substring(0, lower.length-1).toInt * 1024
+    else if (lower.endsWith("t"))
+      lower.substring(0, lower.length-1).toInt * 1024 * 1024
+    else // no suffix, so it's just a number in bytes
+      (lower.toLong / 1024 / 1024).toInt 
   }
 }

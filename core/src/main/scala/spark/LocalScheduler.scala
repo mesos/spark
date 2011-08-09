@@ -2,44 +2,46 @@ package spark
 
 import java.util.concurrent._
 
-import scala.collection.mutable.Map
-
 /**
  * A simple Scheduler implementation that runs tasks locally in a thread pool.
  */
-private class LocalScheduler(threads: Int) extends Scheduler with Logging {
+private class LocalScheduler(threads: Int) extends DAGScheduler with Logging {
+  var attemptId = 0
   var threadPool: ExecutorService =
     Executors.newFixedThreadPool(threads, DaemonThreadFactory)
+
+  val env = SparkEnv.get
   
   override def start() {}
   
   override def waitForRegister() {}
-  
-  override def runTasks[T](tasks: Array[Task[T]])(implicit m: ClassManifest[T])
-      : Array[T] = {
-    val futures = new Array[Future[TaskResult[T]]](tasks.length)
-    
-    for (i <- 0 until tasks.length) {
-      futures(i) = threadPool.submit(new Callable[TaskResult[T]]() {
-        def call(): TaskResult[T] = {
+
+  override def submitTasks(tasks: Seq[Task[_]]) {
+    tasks.zipWithIndex.foreach { case (task, i) =>      
+      val myAttemptId = attemptId
+      attemptId = attemptId + 1
+      threadPool.submit(new Runnable {
+        def run() {
           logInfo("Running task " + i)
+          // Set the Spark execution environment for the worker thread
+          SparkEnv.set(env)
           try {
             // Serialize and deserialize the task so that accumulators are
             // changed to thread-local ones; this adds a bit of unnecessary
-            // overhead but matches how the Nexus Executor works
+            // overhead but matches how the Mesos Executor works
             Accumulators.clear
             val bytes = Utils.serialize(tasks(i))
             logInfo("Size of task " + i + " is " + bytes.size + " bytes")
-            val task = Utils.deserialize[Task[T]](
-              bytes, currentThread.getContextClassLoader)
-            val value = task.run
+            val deserializedTask = Utils.deserialize[Task[_]](
+              bytes, Thread.currentThread.getContextClassLoader)
+            val result: Any = deserializedTask.run(myAttemptId)
             val accumUpdates = Accumulators.values
             logInfo("Finished task " + i)
-            new TaskResult[T](value, accumUpdates)
+            taskEnded(tasks(i), Success, result, accumUpdates)
           } catch {
-            case e: Exception => {
+            case t: Throwable => {
               // TODO: Do something nicer here
-              logError("Exception in task " + i, e)
+              logError("Exception in task " + i, t)
               System.exit(1)
               null
             }
@@ -47,26 +49,9 @@ private class LocalScheduler(threads: Int) extends Scheduler with Logging {
         }
       })
     }
-    
-    val taskResults = futures.map(_.get)
-    for (result <- taskResults)
-      Accumulators.add(currentThread, result.accumUpdates)
-    return taskResults.map(_.value).toArray(m)
   }
   
   override def stop() {}
 
-  override def numCores() = threads
-}
-
-
-/**
- * A ThreadFactory that creates daemon threads
- */
-private object DaemonThreadFactory extends ThreadFactory {
-  override def newThread(r: Runnable): Thread = {
-    val t = new Thread(r);
-    t.setDaemon(true)
-    return t
-  }
+  override def defaultParallelism() = threads
 }

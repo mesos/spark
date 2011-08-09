@@ -64,10 +64,20 @@ object ClosureCleaner extends Logging {
       accessedFields(cls) = Set[String]()
     for (cls <- func.getClass :: innerClasses)
       getClassReader(cls).accept(new FieldAccessFinder(accessedFields), 0)
-    
+    //logInfo("accessedFields: " + accessedFields)
+
+    val isInterpNull = {
+      try {
+        val klass = Class.forName("spark.repl.Main")
+        klass.getMethod("interp").invoke(null) == null
+      } catch {
+        case _: ClassNotFoundException => true
+      }
+    }
+
     var outer: AnyRef = null
     for ((cls, obj) <- (outerClasses zip outerObjects).reverse) {
-      outer = instantiateClass(cls, outer);
+      outer = instantiateClass(cls, outer, isInterpNull);
       for (fieldName <- accessedFields(cls)) {
         val field = cls.getDeclaredField(fieldName)
         field.setAccessible(true)
@@ -85,8 +95,8 @@ object ClosureCleaner extends Logging {
     }
   }
   
-  private def instantiateClass(cls: Class[_], outer: AnyRef): AnyRef = {
-    if (spark.repl.Main.interp == null) {
+  private def instantiateClass(cls: Class[_], outer: AnyRef, isInterpNull: Boolean): AnyRef = {
+    if (isInterpNull) {
       // This is a bona fide closure class, whose constructor has no effects
       // other than to set its fields, so use its constructor
       val cons = cls.getConstructors()(0)
@@ -125,6 +135,8 @@ class FieldAccessFinder(output: Map[Class[_], Set[String]]) extends EmptyVisitor
       
       override def visitMethodInsn(op: Int, owner: String, name: String,
           desc: String) {
+        // Check for calls a getter method for a variable in an interpreter wrapper object.
+        // This means that the corresponding field will be accessed, so we should save it.
         if (op == INVOKEVIRTUAL && owner.endsWith("$iwC") && !name.endsWith("$outer"))
           for (cl <- output.keys if cl.getName == owner.replace('/', '.'))
             output(cl) += name

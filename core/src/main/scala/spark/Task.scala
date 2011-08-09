@@ -1,16 +1,9 @@
 package spark
 
-import mesos._
+class TaskContext(val stageId: Int, val splitId: Int, val attemptId: Int) extends Serializable
 
-@serializable
-trait Task[T] {
-  def run: T
+abstract class Task[T] extends Serializable {
+  def run (id: Int): T
   def preferredLocations: Seq[String] = Nil
-  def markStarted(offer: SlaveOffer) {}
-}
-
-@serializable
-class FunctionTask[T](body: () => T)
-extends Task[T] {
-  def run: T = body()
+  def generation: Option[Long] = None
 }
