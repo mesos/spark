@@ -205,13 +205,20 @@ extends Job(jobId) with Logging
       tasksFinished += 1
       logInfo("Finished TID %s (progress: %d/%d)".format(
         tid, tasksFinished, numTasks))
-      // Deserialize task result
-      val result = Utils.deserialize[TaskResult[_]](status.getData.toByteArray)
+      // Deserialize task result (TODO: fetch it in a different thread?)
+      //val result = Utils.deserialize[TaskResult[_]](status.getData.toByteArray)
+      val url = Utils.deserialize[String](status.getData.toByteArray)
+      logInfo("Fetching result from " + url)
+      val inputStream = new java.io.ObjectInputStream(new java.net.URL(url).openStream())
+      val result = inputStream.readObject.asInstanceOf[TaskResult[_]]
+      inputStream.close()
       sched.taskEnded(tasks(index), Success, result.value, result.accumUpdates)
       // Mark finished and stop if we've finished all the tasks
       finished(index) = true
-      if (tasksFinished == numTasks)
+      if (tasksFinished == numTasks) {
+        logInfo("Finishing jobs because all tasks are done")
         sched.jobFinished(this)
+      }
     } else {
       logInfo("Ignoring task-finished event for TID " + tid +
         " because task " + index + " is already finished")
@@ -235,8 +242,10 @@ extends Job(jobId) with Logging
             sched.taskEnded(tasks(index), fetchFailed, null, null)
             finished(index) = true
             tasksFinished += 1
-            if (tasksFinished == numTasks)
+            if (tasksFinished == numTasks) {
+              logInfo("Finishing jobs because of fetch failure")
               sched.jobFinished(this)
+            }
             return
           case ef: ExceptionFailure =>
             val key = ef.exception.toString
@@ -297,6 +306,7 @@ extends Job(jobId) with Logging
     failed = true
     causeOfFailure = message
     // TODO: Kill running tasks if we were not terminated due to a Mesos error
+    logInfo("Aborting job because of failure: " + message)
     sched.jobFinished(this)
   }
 }

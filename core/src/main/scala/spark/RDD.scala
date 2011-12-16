@@ -153,10 +153,12 @@ abstract class RDD[T: ClassManifest](@transient sc: SparkContext) extends Serial
    * The function op(t1, t2) is allowed to modify t1 and return it as its result
    * value to avoid object allocation; however, it should not modify t2.
    */
-  def fold(zeroValue: T)(op: (T, T) => T): T = {
+  def fold(zeroValue: => T)(op: (T, T) => T): T = {
     val cleanOp = sc.clean(op)
-    val results = sc.runJob(this, (iter: Iterator[T]) => iter.fold(zeroValue)(cleanOp))
-    return results.fold(zeroValue)(cleanOp)
+    var result = zeroValue
+    sc.runJob(this, (ctx: TaskContext, iter: Iterator[T]) => iter.fold(zeroValue)(cleanOp),
+              0 until splits.size, false, (idx: Int, t: T) => result = op(result, t))
+    return result
   }
 
   /**

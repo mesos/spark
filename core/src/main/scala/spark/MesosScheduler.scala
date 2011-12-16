@@ -154,6 +154,7 @@ extends MScheduler with DAGScheduler with Logging
   
   def jobFinished(job: Job) {
     this.synchronized {
+      logInfo("Job finished: " + job.getId)
       activeJobs -= job.getId
       activeJobsQueue.dequeueAll(x => (x == job))
       taskIdToJobId --= jobTasks(job.getId)
@@ -236,6 +237,7 @@ extends MScheduler with DAGScheduler with Logging
 
   override def statusUpdate(d: SchedulerDriver, status: TaskStatus) {
     synchronized {
+      logInfo("Task " + status.getTaskId.getValue + " is " + status.getState)
       try {
         val tid = status.getTaskId.getValue
         if (status.getState == TaskState.TASK_LOST && taskIdToSlaveId.contains(tid)) {

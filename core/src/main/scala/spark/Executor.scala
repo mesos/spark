@@ -71,10 +71,17 @@ class Executor extends org.apache.mesos.Executor with Logging {
         val value = task.run(tid.toInt)
         val accumUpdates = Accumulators.values
         val result = new TaskResult(value, accumUpdates)
+
+        val file = LocalFileShuffle.getOutputFile(0, desc.getTaskId.getValue.toInt, 0)
+        val out = new java.io.ObjectOutputStream(new java.io.BufferedOutputStream(new java.io.FileOutputStream(file)))
+        out.writeObject(result)
+        out.close()
+        val url = LocalFileShuffle.getServerUri + "/shuffle/0/" + desc.getTaskId.getValue.toInt + "/0"
+ 
         d.sendStatusUpdate(TaskStatus.newBuilder()
                            .setTaskId(desc.getTaskId)
                            .setState(TaskState.TASK_FINISHED)
-                           .setData(ByteString.copyFrom(Utils.serialize(result)))
+                           .setData(ByteString.copyFrom(Utils.serialize(url)))
                            .build())
         logInfo("Finished task ID " + tid)
       } catch {

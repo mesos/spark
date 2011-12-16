@@ -7,11 +7,12 @@ private trait Scheduler {
   // Wait for registration with Mesos.
   def waitForRegister()
 
-  // Run a function on some partitions of an RDD, returning an array of results. The allowLocal flag specifies
+  // Run a function on some partitions of an RDD, calling a function for each result. The allowLocal flag specifies
   // whether the scheduler is allowed to run the job on the master machine rather than shipping it to the cluster,
   // for actions that create short jobs such as first() and take().
   def runJob[T, U: ClassManifest](rdd: RDD[T], func: (TaskContext, Iterator[T]) => U,
-                                  partitions: Seq[Int], allowLocal: Boolean): Array[U]
+                                  partitions: Seq[Int], allowLocal: Boolean,
+                                  resultHandler: (Int, U) => Unit)
 
   def stop()
 

@@ -247,13 +247,20 @@ extends Logging {
    * master rather than shipping it out to the cluster, for short actions like first().
    */
   def runJob[T, U: ClassManifest](rdd: RDD[T], func: (TaskContext, Iterator[T]) => U,
-                                  partitions: Seq[Int], allowLocal: Boolean)
-      : Array[U] = {
+                                  partitions: Seq[Int], allowLocal: Boolean,
+                                  resultHandler: (Int, U) => Unit)
+      : Unit = {
     logInfo("Starting job...")
     val start = System.nanoTime
-    val result = scheduler.runJob(rdd, func, partitions, allowLocal)
+    val result = scheduler.runJob(rdd, func, partitions, allowLocal, resultHandler)
     logInfo("Job finished in " + (System.nanoTime - start) / 1e9 + " s")
-    result
+  }
+
+  def runJob[T, U: ClassManifest](rdd: RDD[T], func: (TaskContext, Iterator[T]) => U,
+                                  partitions: Seq[Int], allowLocal: Boolean): Array[U] = {
+    val results = new Array[U](partitions.size)
+    runJob(rdd, func, partitions, allowLocal, (i: Int, r: U) => results(i) = r)
+    return results
   }
 
   def runJob[T, U: ClassManifest](rdd: RDD[T], func: Iterator[T] => U, partitions: Seq[Int],
@@ -288,7 +295,7 @@ extends Logging {
   // Default min number of splits for Hadoop RDDs when not given by user
   def defaultMinSplits: Int = math.min(defaultParallelism, 2)
 
-  private var nextShuffleId = new AtomicInteger(0)
+  private var nextShuffleId = new AtomicInteger(1)
 
   private[spark] def newShuffleId(): Int = {
     nextShuffleId.getAndIncrement()

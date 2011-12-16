@@ -147,13 +147,11 @@ private trait DAGScheduler extends Scheduler with Logging {
   }
 
   override def runJob[T, U](finalRdd: RDD[T], func: (TaskContext, Iterator[T]) => U,
-                            partitions: Seq[Int], allowLocal: Boolean)
-                           (implicit m: ClassManifest[U])
-      : Array[U] = {
+                            partitions: Seq[Int], allowLocal: Boolean, resultHandler: (Int, U) => Unit)
+                           (implicit m: ClassManifest[U]) {
     val outputParts = partitions.toArray
     val numOutputParts: Int = partitions.size
     val finalStage = newStage(finalRdd, None)
-    val results = new Array[U](numOutputParts)
     val finished = new Array[Boolean](numOutputParts)
     var numFinished = 0
 
@@ -175,7 +173,8 @@ private trait DAGScheduler extends Scheduler with Logging {
       logInfo("Computing the requested partition locally")
       val split = finalRdd.splits(outputParts(0))
       val taskContext = new TaskContext(finalStage.id, outputParts(0), 0)
-      return Array(func(taskContext, finalRdd.iterator(split)))
+      resultHandler(0, func(taskContext, finalRdd.iterator(split)))
+      return
     }
 
     def submitStage(stage: Stage) {
@@ -229,8 +228,10 @@ private trait DAGScheduler extends Scheduler with Logging {
           Accumulators.add(evt.accumUpdates)
           evt.task match {
             case rt: ResultTask[_, _] =>
-              results(rt.outputId) = evt.result.asInstanceOf[U]
-              finished(rt.outputId) = true
+              if (!finished(rt.outputId)) {
+                finished(rt.outputId) = true
+                resultHandler(rt.outputId, evt.result.asInstanceOf[U])
+              }
               numFinished += 1
             case smt: ShuffleMapTask =>
               val stage = idToStage(smt.stageId)
@@ -294,8 +295,6 @@ private trait DAGScheduler extends Scheduler with Logging {
         failed.clear()
       }
     }
-
-    return results
   }
 
   def getPreferredLocs(rdd: RDD[_], partition: Int): List[String] = {
