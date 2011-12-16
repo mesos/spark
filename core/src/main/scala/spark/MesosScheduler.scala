@@ -237,7 +237,7 @@ extends MScheduler with DAGScheduler with Logging
 
   override def statusUpdate(d: SchedulerDriver, status: TaskStatus) {
     synchronized {
-      logInfo("Task " + status.getTaskId.getValue + " is " + status.getState)
+      //logInfo("Task " + status.getTaskId.getValue + " is " + status.getState)
       try {
         val tid = status.getTaskId.getValue
         if (status.getState == TaskState.TASK_LOST && taskIdToSlaveId.contains(tid)) {

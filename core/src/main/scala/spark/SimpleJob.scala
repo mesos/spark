@@ -1,6 +1,7 @@
 package spark
 
 import java.util.{HashMap => JHashMap}
+import java.util.concurrent._
 
 import scala.collection.mutable.ArrayBuffer
 import scala.collection.mutable.HashMap
@@ -198,27 +199,36 @@ extends Job(jobId) with Logging
     }
   }
 
+  val fetchPool = Executors.newFixedThreadPool(4)
+
   def taskFinished(status: TaskStatus) {
     val tid = status.getTaskId.getValue
     val index = tidToIndex(tid)
     if (!finished(index)) {
-      tasksFinished += 1
-      logInfo("Finished TID %s (progress: %d/%d)".format(
-        tid, tasksFinished, numTasks))
-      // Deserialize task result (TODO: fetch it in a different thread?)
-      //val result = Utils.deserialize[TaskResult[_]](status.getData.toByteArray)
-      val url = Utils.deserialize[String](status.getData.toByteArray)
-      logInfo("Fetching result from " + url)
-      val inputStream = new java.io.ObjectInputStream(new java.net.URL(url).openStream())
-      val result = inputStream.readObject.asInstanceOf[TaskResult[_]]
-      inputStream.close()
-      sched.taskEnded(tasks(index), Success, result.value, result.accumUpdates)
-      // Mark finished and stop if we've finished all the tasks
-      finished(index) = true
-      if (tasksFinished == numTasks) {
-        logInfo("Finishing jobs because all tasks are done")
-        sched.jobFinished(this)
-      }
+      val bytes = status.getData.toByteArray
+      fetchPool.execute(new Runnable {
+        override def run() {
+          // Deserialize task result (TODO: fetch it in a different thread?)
+          //val result = Utils.deserialize[TaskResult[_]](bytes)
+          val url = Utils.deserialize[String](bytes)
+          logInfo("Fetching result from " + url)
+          val inputStream = new java.io.ObjectInputStream(new java.net.URL(url).openStream())
+          val result = inputStream.readObject.asInstanceOf[TaskResult[_]]
+          inputStream.close()
+          sched.synchronized {
+	    tasksFinished += 1
+	    logInfo("Finished TID %s (progress: %d/%d)".format(
+	      tid, tasksFinished, numTasks))
+            sched.taskEnded(tasks(index), Success, result.value, result.accumUpdates)
+            // Mark finished and stop if we've finished all the tasks
+            finished(index) = true
+            if (tasksFinished == numTasks) {
+              logInfo("Finishing jobs because all tasks are done")
+              sched.jobFinished(SimpleJob.this)
+            }
+          }
+        }
+      })
     } else {
       logInfo("Ignoring task-finished event for TID " + tid +
         " because task " + index + " is already finished")
@@ -306,7 +316,6 @@ extends Job(jobId) with Logging
     failed = true
     causeOfFailure = message
     // TODO: Kill running tasks if we were not terminated due to a Mesos error
-    logInfo("Aborting job because of failure: " + message)
     sched.jobFinished(this)
   }
 }

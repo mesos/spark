@@ -142,7 +142,9 @@ class KryoSerializer extends Serializer with Logging {
       // Options and Either
       Some(1), Left(1), Right(1),
       // Higher-dimensional tuples
-      (1, 1, 1), (1, 1, 1, 1), (1, 1, 1, 1, 1)
+      (1, 1, 1), (1, 1, 1, 1), (1, 1, 1, 1, 1),
+      // Spark types
+      new TaskResult(null, null)
     )
     for (obj <- toRegister) {
       kryo.register(obj.getClass)
@@ -177,6 +179,7 @@ class KryoSerializer extends Serializer with Logging {
         buildMap(elems).asInstanceOf[T]
       }
     }
+    kryo.register(mutable.Map().getClass, new ScalaMapSerializer(mutable.Map() ++ _))
     kryo.register(mutable.HashMap().getClass, new ScalaMapSerializer(mutable.HashMap() ++ _))
     // TODO: add support for immutable maps too; this is more annoying because there are many
     // subclasses of immutable.Map for small maps (with <= 4 entries)
