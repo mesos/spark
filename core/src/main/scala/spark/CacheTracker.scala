@@ -1,10 +1,11 @@
 package spark
 
-import scala.actors._
-import scala.actors.Actor._
-import scala.actors.remote._
 import scala.collection.mutable.HashMap
 import scala.collection.mutable.HashSet
+
+import akka.actor.Actor
+import akka.actor.Actor._
+import akka.actor.ActorRef
 
 sealed trait CacheTrackerMessage
 case class AddedToCache(rddId: Int, partition: Int, host: String) extends CacheTrackerMessage
@@ -18,60 +19,51 @@ class CacheTrackerActor extends DaemonActor with Logging {
   val locs = new HashMap[Int, Array[List[String]]]
   // TODO: Should probably store (String, CacheType) tuples
   
-  def act() {
-    val port = System.getProperty("spark.master.port").toInt
-    RemoteActor.alive(port)
-    RemoteActor.register('CacheTracker, self)
-    logInfo("Registered actor on port " + port)
+  def receive = {
+    case RegisterRDD(rddId: Int, numPartitions: Int) =>
+      logInfo("Registering RDD " + rddId + " with " + numPartitions + " partitions")
+      locs(rddId) = Array.fill[List[String]](numPartitions)(Nil)
+      self.reply('OK)
     
-    loop {
-      react {
-        case RegisterRDD(rddId: Int, numPartitions: Int) =>
-          logInfo("Registering RDD " + rddId + " with " + numPartitions + " partitions")
-          locs(rddId) = Array.fill[List[String]](numPartitions)(Nil)
-          reply('OK)
-        
-        case AddedToCache(rddId, partition, host) =>
-          logInfo("Cache entry added: (%s, %s) on %s".format(rddId, partition, host))
-          locs(rddId)(partition) = host :: locs(rddId)(partition)
-          reply('OK)
-          
-        case DroppedFromCache(rddId, partition, host) =>
-          logInfo("Cache entry removed: (%s, %s) on %s".format(rddId, partition, host))
-          locs(rddId)(partition) = locs(rddId)(partition).filterNot(_ == host)
-        
-        case MemoryCacheLost(host) =>
-          logInfo("Memory cache lost on " + host)
-          // TODO: Drop host from the memory locations list of all RDDs
-        
-        case GetCacheLocations =>
-          logInfo("Asked for current cache locations")
-          val locsCopy = new HashMap[Int, Array[List[String]]]
-          for ((rddId, array) <- locs) {
-            locsCopy(rddId) = array.clone()
-          }
-          reply(locsCopy)
-
-        case StopCacheTracker =>
-          reply('OK)
-          exit()
+    case AddedToCache(rddId, partition, host) =>
+      logInfo("Cache entry added: (%s, %s) on %s".format(rddId, partition, host))
+      locs(rddId)(partition) = host :: locs(rddId)(partition)
+      self.reply('OK)
+      
+    case DroppedFromCache(rddId, partition, host) =>
+      logInfo("Cache entry removed: (%s, %s) on %s".format(rddId, partition, host))
+      locs(rddId)(partition) = locs(rddId)(partition).filterNot(_ == host)
+    
+    case MemoryCacheLost(host) =>
+      logInfo("Memory cache lost on " + host)
+      // TODO: Drop host from the memory locations list of all RDDs
+    
+    case GetCacheLocations =>
+      logInfo("Asked for current cache locations")
+      val locsCopy = new HashMap[Int, Array[List[String]]]
+      for ((rddId, array) <- locs) {
+        locsCopy(rddId) = array.clone()
       }
-    }
+      self.reply(locsCopy)
+
+    case StopCacheTracker =>
+      self.reply('OK)
+      self.exit()
   }
 }
 
 class CacheTracker(isMaster: Boolean, theCache: Cache) extends Logging {
   // Tracker actor on the master, or remote reference to it on workers
-  var trackerActor: AbstractActor = null
+  var trackerActor: ActorRef = null
   
   if (isMaster) {
-    val tracker = new CacheTrackerActor
-    tracker.start()
-    trackerActor = tracker
+    val actor = actorOf(new CacheTrackerActor)
+    trackerActor = actor
+    remote.register("CacheTracker", actor)
   } else {
     val host = System.getProperty("spark.master.host")
     val port = System.getProperty("spark.master.port").toInt
-    trackerActor = RemoteActor.select(Node(host, port), 'CacheTracker)
+    trackerActor = remote.actorFor("CacheTracker", host, port)
   }
 
   val registeredRddIds = new HashSet[Int]
@@ -88,18 +80,14 @@ class CacheTracker(isMaster: Boolean, theCache: Cache) extends Logging {
       if (!registeredRddIds.contains(rddId)) {
         logInfo("Registering RDD ID " + rddId + " with cache")
         registeredRddIds += rddId
-        trackerActor !? RegisterRDD(rddId, numPartitions)
+        (trackerActor ? RegisterRDD(rddId, numPartitions)).get
       }
     }
   }
   
   // Get a snapshot of the currently known locations
   def getLocationsSnapshot(): HashMap[Int, Array[List[String]]] = {
-    (trackerActor !? GetCacheLocations) match {
-      case h: HashMap[_, _] => h.asInstanceOf[HashMap[Int, Array[List[String]]]]
-      case _ => throw new SparkException(
-          "Internal error: CacheTrackerActor did not reply with a HashMap")
-    }
+    (trackerActor ? GetCacheLocations).as[HashMap[Int, Array[List[String]]]].get
   }
   
   // Gets or computes an RDD split
@@ -127,7 +115,7 @@ class CacheTracker(isMaster: Boolean, theCache: Cache) extends Logging {
       // If we got here, we have to load the split
       // Tell the master that we're doing so
       val host = System.getProperty("spark.hostname", Utils.localHostName)
-      val future = trackerActor !! AddedToCache(rdd.id, split.index, host)
+      val future = trackerActor ? AddedToCache(rdd.id, split.index, host)
       // TODO: fetch any remote copy of the split that may be available
       // TODO: also register a listener for when it unloads
       logInfo("Computing partition " + split)
@@ -137,13 +125,13 @@ class CacheTracker(isMaster: Boolean, theCache: Cache) extends Logging {
         loading.remove(key)
         loading.notifyAll()
       }
-      future.apply() // Wait for the reply from the cache tracker
+      future.get // Wait for the reply from the cache tracker
       return array.iterator
     }
   }
 
   def stop() {
-    trackerActor !? StopCacheTracker
+    (trackerActor ? StopCacheTracker).get
     registeredRddIds.clear()
     trackerActor = null
   }

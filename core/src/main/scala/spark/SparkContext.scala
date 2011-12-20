@@ -3,9 +3,10 @@ package spark
 import java.io._
 import java.util.concurrent.atomic.AtomicInteger
 
-import scala.actors.remote.RemoteActor
 import scala.collection.mutable.ArrayBuffer
 
+import akka.actor.Actor
+import akka.actor.Actor._
 import org.apache.hadoop.fs.Path
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.mapred.InputFormat
@@ -23,7 +24,6 @@ import org.apache.hadoop.io.Text
 import org.apache.hadoop.mapred.FileInputFormat
 import org.apache.hadoop.mapred.JobConf
 import org.apache.hadoop.mapred.TextInputFormat
-
 import org.apache.hadoop.mapreduce.{InputFormat => NewInputFormat}
 import org.apache.hadoop.mapreduce.lib.input.{FileInputFormat => NewFileInputFormat}
 import org.apache.hadoop.mapreduce.{Job => NewHadoopJob}
@@ -45,9 +45,10 @@ extends Logging {
   if (System.getProperty("spark.master.port") == null)
     System.setProperty("spark.master.port", "7077")
 
-  // Make sure a proper class loader is set for remote actors (unless user set one)
-  if (RemoteActor.classLoader == null)
-    RemoteActor.classLoader = getClass.getClassLoader
+  // Bind to port for Akka remote actors
+  // TODO: Leave this out if the user's job has already set up Akka?
+  remote.start(System.getProperty("spark.master.host"), 
+               System.getProperty("spark.master.port").toInt)
   
   // Create the Spark execution environment (cache, map output tracker, etc)
   val env = SparkEnv.createFromSystemProperties(true)

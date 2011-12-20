@@ -2,10 +2,11 @@ package spark
 
 import java.util.concurrent.ConcurrentHashMap
 
-import scala.actors._
-import scala.actors.Actor._
-import scala.actors.remote._
 import scala.collection.mutable.HashSet
+
+import akka.actor.Actor
+import akka.actor.Actor._
+import akka.actor.ActorRef
 
 sealed trait MapOutputTrackerMessage
 case class GetMapOutputLocations(shuffleId: Int) extends MapOutputTrackerMessage 
@@ -13,27 +14,18 @@ case object StopMapOutputTracker extends MapOutputTrackerMessage
 
 class MapOutputTrackerActor(serverUris: ConcurrentHashMap[Int, Array[String]])
 extends DaemonActor with Logging {
-  def act() {
-    val port = System.getProperty("spark.master.port").toInt
-    RemoteActor.alive(port)
-    RemoteActor.register('MapOutputTracker, self)
-    logInfo("Registered actor on port " + port)
-    
-    loop {
-      react {
-        case GetMapOutputLocations(shuffleId: Int) =>
-          logInfo("Asked to get map output locations for shuffle " + shuffleId)
-          reply(serverUris.get(shuffleId))
-        case StopMapOutputTracker =>
-          reply('OK)
-          exit()
-      }
-    }
+  def receive = {
+    case GetMapOutputLocations(shuffleId: Int) =>
+      logInfo("Asked to get map output locations for shuffle " + shuffleId)
+      self.reply(serverUris.get(shuffleId))
+    case StopMapOutputTracker =>
+      self.reply('OK)
+      self.exit()
   }
 }
 
 class MapOutputTracker(isMaster: Boolean) extends Logging {
-  var trackerActor: AbstractActor = null
+  var trackerActor: ActorRef = null
 
   private var serverUris = new ConcurrentHashMap[Int, Array[String]]
 
@@ -43,13 +35,13 @@ class MapOutputTracker(isMaster: Boolean) extends Logging {
   private var generationLock = new java.lang.Object
   
   if (isMaster) {
-    val tracker = new MapOutputTrackerActor(serverUris)
-    tracker.start()
-    trackerActor = tracker
+    val actor = actorOf(new MapOutputTrackerActor(serverUris))
+    trackerActor = actor
+    remote.register("MapOutputTracker", actor)
   } else {
     val host = System.getProperty("spark.master.host")
     val port = System.getProperty("spark.master.port").toInt
-    trackerActor = RemoteActor.select(Node(host, port), 'MapOutputTracker)
+    trackerActor = remote.actorFor("MapOutputTracker", host, port)
   }
   
   def registerMapOutput(shuffleId: Int, numMaps: Int, mapId: Int, serverUri: String) {
@@ -101,7 +93,7 @@ class MapOutputTracker(isMaster: Boolean) extends Logging {
       }
       // We won the race to fetch the output locs; do so
       logInfo("Doing the fetch; tracker actor = " + trackerActor)
-      val fetched = (trackerActor !? GetMapOutputLocations(shuffleId)).asInstanceOf[Array[String]]
+      val fetched = (trackerActor ? GetMapOutputLocations(shuffleId)).as[Array[String]].get
       serverUris.put(shuffleId, fetched)
       fetching.synchronized {
         fetching -= shuffleId
@@ -118,7 +110,7 @@ class MapOutputTracker(isMaster: Boolean) extends Logging {
   }
 
   def stop() {
-    trackerActor !? StopMapOutputTracker
+    (trackerActor ? StopMapOutputTracker).get
     serverUris.clear()
     trackerActor = null
   }
