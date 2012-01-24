@@ -67,4 +67,13 @@ else
   SCALA=scala
 fi
 
-exec $SCALA -cp $CLASSPATH "$@"
+# To write the classpath out:
+#echo $CLASSPATH
+
+# To run java:
+SCALA_HOME=/usr/local/scala/lib
+CLASSPATH+=":$SCALA_HOME/scala-library.jar:$SCALA_HOME/scala-compiler.jar"
+exec java -cp $CLASSPATH "$@"
+
+# To run scala:
+#exec $SCALA -cp $CLASSPATH "$@"
