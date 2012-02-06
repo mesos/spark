@@ -154,7 +154,6 @@ extends MScheduler with DAGScheduler with Logging
   
   def jobFinished(job: Job) {
     this.synchronized {
-      logInfo("Job finished: " + job.getId)
       activeJobs -= job.getId
       activeJobsQueue.dequeueAll(x => (x == job))
       taskIdToJobId --= jobTasks(job.getId)

@@ -223,7 +223,7 @@ extends Job(jobId) with Logging
             // Mark finished and stop if we've finished all the tasks
             finished(index) = true
             if (tasksFinished == numTasks) {
-              logInfo("Finishing jobs because all tasks are done")
+              logDebug("Finishing job because all tasks are done")
               sched.jobFinished(SimpleJob.this)
             }
           }
@@ -253,7 +253,7 @@ extends Job(jobId) with Logging
             finished(index) = true
             tasksFinished += 1
             if (tasksFinished == numTasks) {
-              logInfo("Finishing jobs because of fetch failure")
+              logDebug("Finishing job because of fetch failure")
               sched.jobFinished(this)
             }
             return

@@ -1,6 +1,6 @@
 package spark
 
-import java.io.{File, FileOutputStream}
+import java.io.{File, FileOutputStream, BufferedOutputStream, ObjectOutputStream}
 import java.net.{URI, URL, URLClassLoader}
 import java.util.concurrent._
 
@@ -72,8 +72,11 @@ class Executor extends org.apache.mesos.Executor with Logging {
         val accumUpdates = Accumulators.values
         val result = new TaskResult(value, accumUpdates)
 
+        // TODO: This is currently a hack to transfer the result to the master through HTTP:
+        // we put it in a shuffle directory for shuffle ID "0" and pass back an URL. It will
+        // be replaced when we have a unified block server.
         val file = LocalFileShuffle.getOutputFile(0, desc.getTaskId.getValue.toInt, 0)
-        val out = new java.io.ObjectOutputStream(new java.io.BufferedOutputStream(new java.io.FileOutputStream(file)))
+        val out = new ObjectOutputStream(new BufferedOutputStream(new FileOutputStream(file)))
         out.writeObject(result)
         out.close()
         val url = LocalFileShuffle.getServerUri + "/shuffle/0/" + desc.getTaskId.getValue.toInt + "/0"

@@ -31,7 +31,7 @@ private class LocalScheduler(threads: Int, maxFailures: Int) extends DAGSchedule
     }
 
     def runTask(task: Task[_], idInJob: Int, attemptId: Int) {
-      logInfo("Running task " + idInJob)
+      logInfo("Running task " + idInJob + " attempt " + attemptId)
       // Set the Spark execution environment for the worker thread
       SparkEnv.set(env)
       try {
@@ -45,7 +45,7 @@ private class LocalScheduler(threads: Int, maxFailures: Int) extends DAGSchedule
           bytes, Thread.currentThread.getContextClassLoader)
         val result: Any = deserializedTask.run(attemptId)
         val accumUpdates = Accumulators.values
-        logInfo("Finished task " + idInJob)
+        logInfo("Finished task " + idInJob + " attempt " + attemptId)
         taskEnded(task, Success, result, accumUpdates)
       } catch {
         case t: Throwable => {
