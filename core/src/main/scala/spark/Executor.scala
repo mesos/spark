@@ -101,6 +101,7 @@ class Executor extends org.apache.mesos.Executor with Logging {
               .setState(TaskState.TASK_FAILED)
               .setData(ByteString.copyFrom(Utils.serialize(reason)))
               .build())
+          env.eventReporter.reportException(t, task)
 
           // TODO: Handle errors in tasks less dramatically
           logError("Exception in task ID " + tid, t)

@@ -58,6 +58,7 @@ private class LocalScheduler(threads: Int, maxFailures: Int) extends DAGSchedule
       } catch {
         case t: Throwable => {
           logError("Exception in task " + idInJob, t)
+          env.eventReporter.reportLocalException(t, task)
           failCount.synchronized {
             failCount(idInJob) += 1
             if (failCount(idInJob) <= maxFailures) {

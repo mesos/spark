@@ -52,6 +52,24 @@ class EventReporter(isMaster: Boolean, dispatcher: MessageDispatcher) extends Lo
       }
   }
 
+  /** Reports an exception when running a task on a slave. */
+  def reportException(exception: Throwable, task: Task[_]) {
+    // TODO: The task may refer to an RDD, so sending it through the actor will interfere with RDD
+    // back-referencing, causing a duplicate version of the referenced RDD to be serialized. If
+    // tasks had IDs, we could just send those.
+    reporterActor ! LogEvent(ExceptionEvent(exception, task))
+  }
+
+  /**
+   * Reports an exception when running a task locally using LocalScheduler. Can only be called on
+   * the master.
+   */
+  def reportLocalException(exception: Throwable, task: Task[_]) {
+    for (elw <- eventLogWriter) {
+      elw.log(ExceptionEvent(exception, task))
+    }
+  }
+
   /** Reports the creation of an RDD. Can only be called on the master. */
   def reportRDDCreation(rdd: RDD[_], location: Array[StackTraceElement]) {
     for (elw <- eventLogWriter) {

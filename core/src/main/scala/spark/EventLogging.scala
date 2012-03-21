@@ -7,6 +7,7 @@ import java.io._
  */
 sealed trait EventLogEntry
 
+case class ExceptionEvent(exception: Throwable, task: Task[_]) extends EventLogEntry
 case class RDDCreation(rdd: RDD[_], location: Array[StackTraceElement]) extends EventLogEntry
 case class TaskSubmission(tasks: Seq[Task[_]]) extends EventLogEntry
 
