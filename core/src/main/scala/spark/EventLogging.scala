@@ -37,6 +37,10 @@ case class ShuffleChecksum(
   }
 }
 
+sealed trait AssertionFailure extends EventLogEntry
+case class ElementAssertionFailure(rddId: Int, element: Any) extends AssertionFailure
+case class ReduceAssertionFailure(rddId: Int, splitIndex: Int, element: Any) extends AssertionFailure
+
 /**
  * Stream for writing the event log.
  *

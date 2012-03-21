@@ -83,6 +83,42 @@ class EventLogReader(sc: SparkContext, eventLogPath: Option[String] = None) {
     } yield task).headOption
 
   /**
+   * Inserts a lazily-checked element assertion on the specific RDD into the RDD graph. Returns the
+   * RDD with the assertion applied.
+   *
+   * The given RDD, and any RDDs that depend on it, will be replaced. Make sure to get the new
+   * version of all RDDs using rdds.
+   */
+  def assert[T: ClassManifest](rdd: RDD[T], assertion: T => Boolean): RDD[T] = {
+    val rddId = rdd.id
+    val newRDD = new ElementAssertionRDD(rdd, { (x: T, _: Split) =>
+      if (!assertion(x)) Some(ElementAssertionFailure(rddId, x))
+      else None
+    })
+    replace(rdd, newRDD)
+    newRDD
+  }
+
+  /**
+   * Inserts a lazily-checked reduce assertion on the specific RDD into the RDD graph. Returns the
+   * RDD with the assertion applied. The reducer operates on each partition independently, and only
+   * checks the assertion after the entire partition has been recomputed.
+   *
+   * The given RDD, and any RDDs that depend on it, will be replaced. Make sure to get the new
+   * version of all RDDs using rdds.
+   */
+  def assert[T: ClassManifest](rdd: RDD[T], reducer: (T, T) => T, assertion: T => Boolean): RDD[T] = {
+    // After the given RDD, insert a transformation that checks the assertion
+    val rddId = rdd.id
+    val newRDD = new ReduceAssertionRDD(rdd, reducer, { (x: T, split: Split) =>
+      if (!assertion(x)) Some(ReduceAssertionFailure(rddId, split.index, x))
+      else None
+    })
+    replace(rdd, newRDD)
+    newRDD
+  }
+
+  /**
    * Runs the specified task locally in a new JVM with the given options, and blocks until the task
    * has completed. While the task is running, it takes over the input and output streams.
    */

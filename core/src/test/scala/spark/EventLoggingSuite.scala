@@ -157,6 +157,36 @@ class EventLoggingSuite extends FunSuite {
     sc2.stop()
   }
 
+  test("assertions") {
+    // Initialize event log
+    val tempDir = Files.createTempDir()
+    val eventLog = new File(tempDir, "eventLog")
+
+    // Make an RDD and transform it
+    val sc = makeSparkContext(eventLog)
+    sc.makeRDD(List(1, -2, 3)).map(x => math.sqrt(x)).map(_ * 2).collect()
+    sc.stop()
+
+    // Restore one of the RDDs from the event log and assert something
+    val sc2 = makeSparkContext(eventLog)
+    val r = new EventLogReader(sc2, Some(eventLog.getAbsolutePath))
+    r.assert(r.rdds(1).asInstanceOf[RDD[Double]], (x: Double) => !x.isNaN)
+    r.assert(r.rdds(2).asInstanceOf[RDD[Double]], (x: Double, y: Double) => x + y, (x: Double) => x > 0)
+    r.rdds(2).foreach(x => {}) // Force assertions to be checked
+    sc2.stop()
+
+    // Verify that assertion failures were logged
+    val failures = r.events.collect { case t: AssertionFailure => t }
+    assert(failures.size === 2)
+    failures(0) match {
+      case ElementAssertionFailure(rddId, element: Double) =>
+        assert(rddId === 1)
+        assert(element.isNaN)
+      case _ => fail()
+    }
+    assert(failures(1).isInstanceOf[ReduceAssertionFailure])
+  }
+
   test("disable Arthur") {
     // Initialize event log
     val tempDir = Files.createTempDir()

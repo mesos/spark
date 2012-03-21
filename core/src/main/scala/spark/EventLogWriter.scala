@@ -38,6 +38,13 @@ class EventLogWriter extends Logging {
       recordedChecksum @ (_x: ChecksumEvent) <- r.events
       if checksum mismatch recordedChecksum
     } r.reportChecksumMismatch(recordedChecksum, checksum)
+
+    // If the entry is an AssertionFailure, add it to the events in the EventLogReader. This makes
+    // it possible to add and check assertions while debugging.
+    for (r <- eventLogReader) entry match {
+      case f: AssertionFailure => r.events += f
+      case _ => {}
+    }
   }
 
   def flush() {

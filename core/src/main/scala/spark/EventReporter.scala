@@ -52,6 +52,11 @@ class EventReporter(isMaster: Boolean, dispatcher: MessageDispatcher) extends Lo
       }
   }
 
+  /** Reports the failure of an RDD assertion. */
+  def reportAssertionFailure(failure: AssertionFailure) {
+    reporterActor ! LogEvent(failure)
+  }
+
   /** Reports an exception when running a task on a slave. */
   def reportException(exception: Throwable, task: Task[_]) {
     // TODO: The task may refer to an RDD, so sending it through the actor will interfere with RDD
