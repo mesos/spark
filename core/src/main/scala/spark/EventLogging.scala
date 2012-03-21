@@ -10,6 +10,32 @@ sealed trait EventLogEntry
 case class RDDCreation(rdd: RDD[_], location: Array[StackTraceElement]) extends EventLogEntry
 case class TaskSubmission(tasks: Seq[Task[_]]) extends EventLogEntry
 
+sealed trait ChecksumEvent extends EventLogEntry {
+  def mismatch(other: ChecksumEvent): Boolean
+}
+
+case class TaskChecksum(tid: Int, checksum: Int) extends ChecksumEvent {
+  override def mismatch(other: ChecksumEvent) = other match {
+    case TaskChecksum(otherTid, otherChecksum) => tid == otherTid && checksum != otherChecksum
+    case _ => false
+  }
+}
+
+case class ShuffleChecksum(
+  rddId: Int,
+  shuffleId: Int,
+  partition: Int,
+  outputSplit: Int,
+  checksum: Int
+) extends ChecksumEvent {
+  override def mismatch(other: ChecksumEvent) = other match {
+    case ShuffleChecksum(a, b, c, d, otherChecksum) =>
+      (rddId, shuffleId, partition, outputSplit) == (a, b, c, d) && checksum != otherChecksum
+    case _ =>
+      false
+  }
+}
+
 /**
  * Stream for writing the event log.
  *

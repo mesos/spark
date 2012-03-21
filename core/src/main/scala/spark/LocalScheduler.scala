@@ -2,6 +2,7 @@ package spark
 
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicInteger
+import scala.util.MurmurHash
 
 /**
  * A simple Scheduler implementation that runs tasks locally in a thread pool. Optionally the 
@@ -44,6 +45,14 @@ private class LocalScheduler(threads: Int, maxFailures: Int) extends DAGSchedule
             bytes, Thread.currentThread.getContextClassLoader)
         val result: Any = deserializedTask.run(attemptId)
         val accumUpdates = Accumulators.values
+
+        // Checksum the task's results
+        if (SparkEnv.get.eventReporter.enableChecksumming) {
+          val checksum = new MurmurHash[Any](42) // constant seed so checksum is reproducible
+          checksum(result)
+          SparkEnv.get.eventReporter.reportTaskChecksum(idInJob, checksum.hash)
+        }
+
         logInfo("Finished task " + idInJob)
         taskEnded(task, Success, result, accumUpdates)
       } catch {

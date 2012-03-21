@@ -11,6 +11,10 @@ class EventLogWriter extends Logging {
   setEventLogPath(Option(System.getProperty("spark.arthur.logPath")))
   private var eventLogReader: Option[EventLogReader] = None
 
+  def enableChecksumVerification(eventLogReader: EventLogReader) {
+    this.eventLogReader = Some(eventLogReader)
+  }
+
   def setEventLogPath(eventLogPath: Option[String]) {
     eventLog =
       for {
@@ -25,6 +29,15 @@ class EventLogWriter extends Logging {
     for (l <- eventLog) {
       l.writeObject(entry)
     }
+
+    // Do checksum verification if enabled. TODO: This takes O(n) time in the number of events; we
+    // should index checksum events so it takes O(1) time instead
+    for {
+      r <- eventLogReader
+      checksum @ (_x: ChecksumEvent) <- Some(entry)
+      recordedChecksum @ (_x: ChecksumEvent) <- r.events
+      if checksum mismatch recordedChecksum
+    } r.reportChecksumMismatch(recordedChecksum, checksum)
   }
 
   def flush() {

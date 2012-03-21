@@ -15,8 +15,9 @@ class EventLoggingSuite extends FunSuite {
    * Enables event logging for the current SparkEnv without setting spark.arthur.logPath. This is
    * useful for unit tests, where setting a property affects other tests as well.
    */
-  def initializeEventLogging(eventLog: File, enableArthur: Boolean) {
+  def initializeEventLogging(eventLog: File, enableArthur: Boolean, enableChecksumming: Boolean) {
     SparkEnv.get.eventReporter.enableArthur = enableArthur
+    SparkEnv.get.eventReporter.enableChecksumming = enableChecksumming
     SparkEnv.get.eventReporter.init()
     for (w <- SparkEnv.get.eventReporter.eventLogWriter) {
       w.setEventLogPath(Some(eventLog.getAbsolutePath))
@@ -27,9 +28,13 @@ class EventLoggingSuite extends FunSuite {
     new SparkContext("local", "test")
   }
 
-  def makeSparkContext(eventLog: File, enableArthur: Boolean = true): SparkContext = {
+  def makeSparkContext(
+    eventLog: File,
+    enableArthur: Boolean = true,
+    enableChecksumming: Boolean = true
+  ): SparkContext = {
     val sc = makeSparkContextWithoutEventLogging()
-    initializeEventLogging(eventLog, enableArthur)
+    initializeEventLogging(eventLog, enableArthur, enableChecksumming)
     sc
   }
 
@@ -107,6 +112,31 @@ class EventLoggingSuite extends FunSuite {
     sc2.stop()
   }
 
+  test("checksum verification") {
+    // Initialize event log
+    val tempDir = Files.createTempDir()
+    val eventLog = new File(tempDir, "eventLog")
+
+    // Make some RDDs that have nondeterministic transformations
+    val sc = makeSparkContext(eventLog)
+    val nums = sc.makeRDD(1 to 4)
+    val numsNondeterministic = nums.map(x => math.random)
+    val collected = numsNondeterministic.collect
+    sc.stop()
+
+    // Read them back from the event log
+    val sc2 = makeSparkContext(eventLog)
+    val r = new EventLogReader(sc2, Some(eventLog.getAbsolutePath))
+    assert(r.rdds.length === 2)
+    assert(r.rdds(0).collect.toList === (1 to 4).toList)
+    assert(r.rdds(1).collect.toList != collected.toList)
+    // Ensure that all checksums have gone through
+    sc2.stop()
+
+    // Make sure we found a checksum mismatch
+    assert(r.checksumMismatches.nonEmpty)
+  }
+
   test("task submission logging") {
     // Initialize event log
     val tempDir = Files.createTempDir()
@@ -141,6 +171,23 @@ class EventLoggingSuite extends FunSuite {
     val sc2 = makeSparkContext(eventLog)
     val r = new EventLogReader(sc2, Some(eventLog.getAbsolutePath))
     assert(r.events.isEmpty)
+    sc2.stop()
+  }
+
+  test("disable checksumming") {
+    // Initialize event log
+    val tempDir = Files.createTempDir()
+    val eventLog = new File(tempDir, "eventLog")
+
+    // Make an RDD
+    val sc = makeSparkContext(eventLog, enableChecksumming = false)
+    val nums = sc.makeRDD(1 to 4).collect
+    sc.stop()
+
+    // Make sure the event log has no checksums
+    val sc2 = makeSparkContext(eventLog)
+    val r = new EventLogReader(sc2, Some(eventLog.getAbsolutePath))
+    assert(r.events.collect { case e: ChecksumEvent => e }.isEmpty)
     sc2.stop()
   }
 }

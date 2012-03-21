@@ -18,6 +18,12 @@ class EventLogReader(sc: SparkContext, eventLogPath: Option[String] = None) {
   private val _rdds: ArrayBuffer[RDD[_]] = new ArrayBuffer[RDD[_]]
   loadNewEvents()
 
+  // Enable checksum verification of loaded RDDs as they are computed
+  for (w <- sc.env.eventReporter.eventLogWriter)
+    w.enableChecksumVerification(this)
+
+  val checksumMismatches = new ArrayBuffer[(ChecksumEvent, ChecksumEvent)]
+
   /** List of RDDs from the event log, indexed by their IDs. */
   def rdds = _rdds.readOnly
 
@@ -70,6 +76,10 @@ class EventLogReader(sc: SparkContext, eventLogPath: Option[String] = None) {
         case e: EOFException => {}
       }
     }
+  }
+
+  private[spark] def reportChecksumMismatch(recordedChecksum: ChecksumEvent, newChecksum: ChecksumEvent) {
+    checksumMismatches.append((recordedChecksum, newChecksum))
   }
 
   private def firstExternalElement(location: Array[StackTraceElement]) =

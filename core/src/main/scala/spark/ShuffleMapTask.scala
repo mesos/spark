@@ -4,6 +4,7 @@ import java.io.BufferedOutputStream
 import java.io.FileOutputStream
 import java.io.ObjectOutputStream
 import java.util.{HashMap => JHashMap}
+import scala.util.MurmurHash
 
 import it.unimi.dsi.fastutil.io.FastBufferedOutputStream
 
@@ -40,9 +41,21 @@ class ShuffleMapTask(
       val file = SparkEnv.get.shuffleManager.getOutputFile(dep.shuffleId, partition, i)
       val out = ser.outputStream(new FastBufferedOutputStream(new FileOutputStream(file)))
       val iter = buckets(i).entrySet().iterator()
-      while (iter.hasNext()) {
-        val entry = iter.next()
-        out.writeObject((entry.getKey, entry.getValue))
+
+      if (SparkEnv.get.eventReporter.enableChecksumming) {
+        val checksum = new MurmurHash[(Any, Any)](42) // constant seed so checksum is reproducible
+        while (iter.hasNext()) {
+          val entry = iter.next()
+          val pair = (entry.getKey, entry.getValue)
+          out.writeObject(pair)
+          checksum(pair)
+        }
+        SparkEnv.get.eventReporter.reportShuffleChecksum(rdd, dep.shuffleId, partition, i, checksum.hash)
+      } else {
+        while (iter.hasNext()) {
+          val entry = iter.next()
+          out.writeObject((entry.getKey, entry.getValue))
+        }
       }
       // TODO: have some kind of EOF marker
       out.close()

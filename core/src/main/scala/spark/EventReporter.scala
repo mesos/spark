@@ -27,6 +27,7 @@ class EventReporterActor(dispatcher: MessageDispatcher, eventLogWriter: EventLog
  */
 class EventReporter(isMaster: Boolean, dispatcher: MessageDispatcher) extends Logging {
   var enableArthur = System.getProperty("spark.arthur.enabled", "true").toBoolean
+  var enableChecksumming = System.getProperty("spark.arthur.checksum", "true").toBoolean
   val host = System.getProperty("spark.master.host")
 
   var eventLogWriter: Option[EventLogWriter] = None
@@ -63,6 +64,16 @@ class EventReporter(isMaster: Boolean, dispatcher: MessageDispatcher) extends Lo
     for (elw <- eventLogWriter) {
       elw.log(TaskSubmission(tasks))
     }
+  }
+
+  /** Reports the checksum of a task's results. */
+  def reportTaskChecksum(tid: Int, checksum: Int) {
+    reporterActor ! LogEvent(TaskChecksum(tid, checksum))
+  }
+
+  /** Reports the checksum of a shuffle output. */
+  def reportShuffleChecksum(rdd: RDD[_], shuffleId: Int, partition: Int, outputSplit: Int, checksum: Int) {
+    reporterActor ! LogEvent(ShuffleChecksum(rdd.id, shuffleId, partition, outputSplit, checksum))
   }
 
   def stop() {
