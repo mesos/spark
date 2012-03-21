@@ -2,6 +2,7 @@ package spark
 
 import java.io._
 import java.net.InetAddress
+import java.net.ServerSocket
 import java.util.UUID
 import java.util.concurrent.{Executors, ThreadFactory, ThreadPoolExecutor}
 
@@ -173,5 +174,13 @@ object Utils {
     if (!file.delete()) {
       throw new IOException("Failed to delete: " + file)
     }
+  }
+
+  /** Returns a free port to bind to. */
+  def freePort(): Int = {
+    val server = new ServerSocket(0)
+    val port = server.getLocalPort
+    server.close()
+    port
   }
 }

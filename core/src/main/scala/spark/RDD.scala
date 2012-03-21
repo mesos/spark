@@ -2,7 +2,6 @@ package spark
 
 import java.io.EOFException
 import java.net.URL
-import java.io.ObjectInputStream
 import java.util.concurrent.atomic.AtomicLong
 import java.util.HashSet
 import java.util.Random
@@ -45,7 +44,7 @@ import SparkContext._
  * addition, PairRDDFunctions contains extra methods available on RDDs of key-value pairs, and 
  * SequenceFileRDDFunctions contains extra methods for saving RDDs to Hadoop SequenceFiles.
  */
-abstract class RDD[T: ClassManifest](@transient sc: SparkContext) extends Serializable {
+abstract class RDD[T: ClassManifest](@transient private var sc: SparkContext) extends Serializable {
 
   // Methods that must be implemented by subclasses
   def splits: Array[Split]
@@ -57,15 +56,30 @@ abstract class RDD[T: ClassManifest](@transient sc: SparkContext) extends Serial
 
   // Optionally overridden by subclasses to specify placement preferences
   def preferredLocations(split: Split): Seq[String] = Nil
-  
+
+  /**
+   * Records the event of this RDD's creation. Leaf subclasses should call this method at the end of
+   * their constructors.
+   *
+   * If the SparkEnv is null (e.g., because the RDD was created in a new thread and the SparkEnv was
+   * not set for that thread), this fails silently.
+   *
+   * Once SI-4396 is fixed, we should use DelayedInit to run this instead.
+   */
+  protected def reportCreation() {
+    for (env <- Option(SparkEnv.get)) {
+      env.eventReporter.reportRDDCreation(this, Thread.currentThread.getStackTrace)
+    }
+  }
+
   def context = sc
-  
+
   // Get a unique ID for this RDD
   val id = sc.newRddId()
   
   // Variables relating to caching
   private var shouldCache = false
-  
+
   // Change this RDD's caching
   def cache(): RDD[T] = {
     shouldCache = true
@@ -260,6 +274,16 @@ abstract class RDD[T: ClassManifest](@transient sc: SparkContext) extends Serial
       .map(x => (NullWritable.get(), new BytesWritable(Utils.serialize(x))))
       .saveAsSequenceFile(path)
   }
+
+  /** When deserializing an RDD from an event log, sets the SparkContext as well. */
+  private def readObject(stream: java.io.ObjectInputStream) {
+    stream.defaultReadObject()
+    stream match {
+      case s: EventLogInputStream =>
+        sc = s.sc
+      case _ => {}
+    }
+  }
 }
 
 class MappedRDD[U: ClassManifest, T: ClassManifest](
@@ -270,6 +294,7 @@ class MappedRDD[U: ClassManifest, T: ClassManifest](
   override def splits = prev.splits
   override val dependencies = List(new OneToOneDependency(prev))
   override def compute(split: Split) = prev.iterator(split).map(f)
+  reportCreation()
 }
 
 class FlatMappedRDD[U: ClassManifest, T: ClassManifest](
@@ -280,18 +305,21 @@ class FlatMappedRDD[U: ClassManifest, T: ClassManifest](
   override def splits = prev.splits
   override val dependencies = List(new OneToOneDependency(prev))
   override def compute(split: Split) = prev.iterator(split).flatMap(f)
+  reportCreation()
 }
 
 class FilteredRDD[T: ClassManifest](prev: RDD[T], f: T => Boolean) extends RDD[T](prev.context) {
   override def splits = prev.splits
   override val dependencies = List(new OneToOneDependency(prev))
   override def compute(split: Split) = prev.iterator(split).filter(f)
+  reportCreation()
 }
 
 class GlommedRDD[T: ClassManifest](prev: RDD[T]) extends RDD[Array[T]](prev.context) {
   override def splits = prev.splits
   override val dependencies = List(new OneToOneDependency(prev))
   override def compute(split: Split) = Array(prev.iterator(split).toArray).iterator
+  reportCreation()
 }
 
 class MapPartitionsRDD[U: ClassManifest, T: ClassManifest](
@@ -302,4 +330,5 @@ class MapPartitionsRDD[U: ClassManifest, T: ClassManifest](
   override def splits = prev.splits
   override val dependencies = List(new OneToOneDependency(prev))
   override def compute(split: Split) = f(prev.iterator(split))
+  reportCreation()
 }

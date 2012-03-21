@@ -45,7 +45,7 @@ class HadoopRDD[K, V](
   val serializableConf = new SerializableWritable(conf)
   
   @transient
-  val splits_ : Array[Split] = {
+  private var splits_ : Array[Split] = {
     val inputFormat = createInputFormat(conf)
     val inputSplits = inputFormat.getSplits(conf, minSplits)
     val array = new Array[Split](inputSplits.size)
@@ -110,4 +110,24 @@ class HadoopRDD[K, V](
   }
   
   override val dependencies: List[Dependency[_]] = Nil
+
+  private def writeObject(stream: java.io.ObjectOutputStream) {
+    stream.defaultWriteObject()
+    stream match {
+      case _: EventLogOutputStream =>
+        stream.writeObject(splits_)
+      case _ => {}
+    }
+  }
+
+  private def readObject(stream: java.io.ObjectInputStream) {
+    stream.defaultReadObject()
+    stream match {
+      case s: EventLogInputStream =>
+        splits_ = s.readObject().asInstanceOf[Array[Split]]
+      case _ => {}
+    }
+  }
+
+  reportCreation()
 }

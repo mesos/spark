@@ -43,7 +43,7 @@ class CoGroupedRDD[K](rdds: Seq[RDD[(_, _)]], part: Partitioner)
   }
   
   @transient
-  val splits_ : Array[Split] = {
+  private var splits_ : Array[Split] = {
     val firstRdd = rdds.head
     val array = new Array[Split](part.numPartitions)
     for (i <- 0 until array.size) {
@@ -91,4 +91,24 @@ class CoGroupedRDD[K](rdds: Seq[RDD[(_, _)]], part: Partitioner)
     }
     map.iterator
   }
+
+  private def writeObject(stream: java.io.ObjectOutputStream) {
+    stream.defaultWriteObject()
+    stream match {
+      case _: EventLogOutputStream =>
+        stream.writeObject(splits_)
+      case _ => {}
+    }
+  }
+
+  private def readObject(stream: java.io.ObjectInputStream) {
+    stream.defaultReadObject()
+    stream match {
+      case s: EventLogInputStream =>
+        splits_ = s.readObject().asInstanceOf[Array[Split]]
+      case _ => {}
+    }
+  }
+
+  reportCreation()
 }

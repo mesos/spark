@@ -242,6 +242,7 @@ class SparkContext(
     env.cacheTracker.stop()
     env.shuffleFetcher.stop()
     env.shuffleManager.stop()
+    env.eventReporter.stop()
     SparkEnv.set(null)
   }
 
@@ -328,6 +329,14 @@ class SparkContext(
   // Register a new RDD, returning its RDD ID
   private[spark] def newRddId(): Int = {
     nextRddId.getAndIncrement()
+  }
+
+  /** Moves the next RDD ID so that it will not conflict with the given id. */
+  private[spark] def updateRddId(id: Int) {
+    val delta = id - nextRddId.get + 1
+    if (delta > 0) {
+      nextRddId.addAndGet(delta)
+    }
   }
 }
 

@@ -1,15 +1,19 @@
 package spark
 
+import akka.actor.Actor._
+import org.jboss.netty.channel.ChannelException
+
 class SparkEnv (
   val cache: Cache,
   val serializer: Serializer,
   val cacheTracker: CacheTracker,
   val mapOutputTracker: MapOutputTracker,
   val shuffleFetcher: ShuffleFetcher,
-  val shuffleManager: ShuffleManager
+  val shuffleManager: ShuffleManager,
+  val eventReporter: EventReporter
 )
 
-object SparkEnv {
+object SparkEnv extends Logging {
   private val env = new ThreadLocal[SparkEnv]
 
   def set(e: SparkEnv) {
@@ -38,6 +42,26 @@ object SparkEnv {
 
     val shuffleMgr = new ShuffleManager()
 
-    new SparkEnv(cache, serializer, cacheTracker, mapOutputTracker, shuffleFetcher, shuffleMgr)
+    // Initialize the Akka server on the master
+    if (isMaster) {
+      val host = System.getProperty("spark.master.host")
+      // Repeatedly try to bind to a free port
+      var foundFreePort = false
+      while (!foundFreePort) {
+        try {
+          val remoteServer = remote.start(host, Utils.freePort)
+          System.setProperty("spark.master.akkaPort", remoteServer.address.getPort.toString)
+          logInfo("Akka listening at %s:%d".format(host, remoteServer.address.getPort))
+          foundFreePort = true
+        } catch {
+          case _: ChannelException => {}
+        }
+      }
+    }
+    val akkaDispatcher = new DaemonDispatcher("dispatcher")
+
+    val eventReporter = new EventReporter(isMaster, akkaDispatcher)
+
+    new SparkEnv(cache, serializer, cacheTracker, mapOutputTracker, shuffleFetcher, shuffleMgr, eventReporter)
   }
 }

@@ -39,7 +39,7 @@ class NewHadoopRDD[K, V](
   private val jobId = new JobID(jobtrackerId, id)
 
   @transient
-  private val splits_ : Array[Split] = {
+  private var splits_ : Array[Split] = {
     val inputFormat = inputFormatClass.newInstance
     val jobContext = new JobContext(serializableConf.value, jobId)
     val rawSplits = inputFormat.getSplits(jobContext).toArray
@@ -90,4 +90,24 @@ class NewHadoopRDD[K, V](
   }
 
   override val dependencies: List[Dependency[_]] = Nil
+
+  private def writeObject(stream: java.io.ObjectOutputStream) {
+    stream.defaultWriteObject()
+    stream match {
+      case _: EventLogOutputStream =>
+        stream.writeObject(splits_)
+      case _ => {}
+    }
+  }
+
+  private def readObject(stream: java.io.ObjectInputStream) {
+    stream.defaultReadObject()
+    stream match {
+      case s: EventLogInputStream =>
+        splits_ = s.readObject().asInstanceOf[Array[Split]]
+      case _ => {}
+    }
+  }
+
+  reportCreation()
 }

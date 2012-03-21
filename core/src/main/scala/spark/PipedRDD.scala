@@ -48,6 +48,8 @@ class PipedRDD[T: ClassManifest](parent: RDD[T], command: Seq[String])
     // Return an iterator that read lines from the process's stdout
     Source.fromInputStream(proc.getInputStream).getLines
   }
+
+  reportCreation()
 }
 
 object PipedRDD {

@@ -380,6 +380,7 @@ class PairRDDFunctions[K: ClassManifest, V: ClassManifest](
       prev.iterator(split).toArray
         .sortWith((x, y) => if (ascending) x._1 < y._1 else x._1 > y._1).iterator
     }
+    reportCreation()
   } 
  
 class MappedValuesRDD[K, V, U](prev: RDD[(K, V)], f: V => U) extends RDD[(K, U)](prev.context) {
@@ -387,6 +388,7 @@ class MappedValuesRDD[K, V, U](prev: RDD[(K, V)], f: V => U) extends RDD[(K, U)]
   override val dependencies = List(new OneToOneDependency(prev))
   override val partitioner = prev.partitioner
   override def compute(split: Split) = prev.iterator(split).map{case (k, v) => (k, f(v))}
+  reportCreation()
 }
 
 class FlatMappedValuesRDD[K, V, U](prev: RDD[(K, V)], f: V => Traversable[U])
@@ -400,6 +402,7 @@ class FlatMappedValuesRDD[K, V, U](prev: RDD[(K, V)], f: V => Traversable[U])
       case (k, v) => f(v).map(x => (k, x))
     }.iterator
   }
+  reportCreation()
 }
 
 object Manifests {

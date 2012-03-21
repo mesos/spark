@@ -242,6 +242,7 @@ private trait DAGScheduler extends Scheduler with Logging {
         }
         myPending ++= tasks
         submitTasks(tasks, runId)
+        SparkEnv.get.eventReporter.reportTaskSubmission(tasks)
       }
   
       submitStage(finalStage)

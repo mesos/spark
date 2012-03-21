@@ -31,7 +31,7 @@ class ParallelCollection[T: ClassManifest](
   // instead.
 
   @transient
-  val splits_ = {
+  private var splits_ = {
     val slices = ParallelCollection.slice(data, numSlices).toArray
     slices.indices.map(i => new ParallelCollectionSplit(id, i, slices(i))).toArray
   }
@@ -43,6 +43,26 @@ class ParallelCollection[T: ClassManifest](
   override def preferredLocations(s: Split): Seq[String] = Nil
   
   override val dependencies: List[Dependency[_]] = Nil
+
+  private def writeObject(stream: java.io.ObjectOutputStream) {
+    stream.defaultWriteObject()
+    stream match {
+      case _: EventLogOutputStream =>
+        stream.writeObject(splits_)
+      case _ => {}
+    }
+  }
+
+  private def readObject(stream: java.io.ObjectInputStream) {
+    stream.defaultReadObject()
+    stream match {
+      case s: EventLogInputStream =>
+        splits_ = s.readObject().asInstanceOf[Array[ParallelCollectionSplit[T]]]
+      case _ => {}
+    }
+  }
+
+  reportCreation()
 }
 
 private object ParallelCollection {
