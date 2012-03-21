@@ -175,6 +175,19 @@ class EventLogReader(sc: SparkContext, eventLogPath: Option[String] = None) {
     checksumMismatches.append((recordedChecksum, newChecksum))
   }
 
+  /** Replaces rdd with newRDD in the dependency graph. */
+  private def replace[T: ClassManifest](rdd: RDD[T], newRDD: RDD[T]) {
+    val rddIndex = _rdds.indexOf(rdd)
+    _rdds(rddIndex) = newRDD
+    for (descendantRddIndex <- (rddIndex + 1) until _rdds.length) {
+      _rdds(descendantRddIndex) = _rdds(descendantRddIndex).mapDependencies(new (RDD ~> RDD) {
+        def apply[U](dependency: RDD[U]): RDD[U] = {
+          _rdds(dependency.id).asInstanceOf[RDD[U]]
+        }
+      })
+    }
+  }
+
   private def firstExternalElement(location: Array[StackTraceElement]) =
     (location.tail.find(!_.getClassName.matches("""spark\.[A-Z].*"""))
       orElse { location.headOption }

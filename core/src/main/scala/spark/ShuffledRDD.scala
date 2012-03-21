@@ -25,6 +25,8 @@ class ShuffledRDD[K, V, C](
   val dep = new ShuffleDependency(context.newShuffleId, parent, aggregator, part)
   override val dependencies = List(dep)
 
+  override def mapDependencies(g: RDD ~> RDD) = new ShuffledRDD(g(parent), aggregator, part)
+
   override def compute(split: Split): Iterator[(K, C)] = {
     val combiners = new JHashMap[K, C]
     def mergePair(k: K, c: C) {

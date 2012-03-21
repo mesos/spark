@@ -184,3 +184,13 @@ object Utils {
     port
   }
 }
+
+/**
+ * Represents a natural transformation from F to G. Such a function maps F[A] to G[A] for all A.
+ * For example, if you give it an F[Int], it will return a G[Int].
+ *
+ * See http://apocalisp.wordpress.com/2010/10/26/type-level-programming-in-scala-part-7-natural-transformation%C2%A0literals/.
+ */
+trait ~>[F[_],G[_]] {
+  def apply[A](a: F[A]): G[A]
+}

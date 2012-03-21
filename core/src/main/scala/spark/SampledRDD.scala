@@ -22,6 +22,8 @@ class SampledRDD[T: ClassManifest](
   override def splits = splits_.asInstanceOf[Array[Split]]
 
   override val dependencies = List(new OneToOneDependency(prev))
+
+  override def mapDependencies(g: RDD ~> RDD) = new SampledRDD(g(prev), withReplacement, frac, seed)
   
   override def preferredLocations(split: Split) =
     prev.preferredLocations(split.asInstanceOf[SampledRDDSplit].prev)

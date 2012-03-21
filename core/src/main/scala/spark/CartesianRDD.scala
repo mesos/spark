@@ -45,6 +45,8 @@ class CartesianRDD[T: ClassManifest, U:ClassManifest](
     }
   )
 
+  override def mapDependencies(g: RDD ~> RDD) = new CartesianRDD(context, g(rdd1), g(rdd2))
+
   private def writeObject(stream: java.io.ObjectOutputStream) {
     stream.defaultWriteObject()
     stream match {

@@ -45,6 +45,8 @@ class UnionRDD[T: ClassManifest](
   
   override def compute(s: Split): Iterator[T] = s.asInstanceOf[UnionSplit[T]].iterator()
 
+  override def mapDependencies(g: RDD ~> RDD) = new UnionRDD(context, rdds.map(rdd => g(rdd)))
+
   override def preferredLocations(s: Split): Seq[String] =
     s.asInstanceOf[UnionSplit[T]].preferredLocations()
 

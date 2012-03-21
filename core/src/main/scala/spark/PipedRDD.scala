@@ -20,6 +20,8 @@ class PipedRDD[T: ClassManifest](parent: RDD[T], command: Seq[String])
 
   override val dependencies = List(new OneToOneDependency(parent))
 
+  override def mapDependencies(g: RDD ~> RDD) = new PipedRDD(g(parent), command)
+
   override def compute(split: Split): Iterator[String] = {
     val proc = Runtime.getRuntime.exec(command.toArray)
     val env = SparkEnv.get

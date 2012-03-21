@@ -50,7 +50,12 @@ abstract class RDD[T: ClassManifest](@transient private var sc: SparkContext) ex
   def splits: Array[Split]
   def compute(split: Split): Iterator[T]
   val dependencies: List[Dependency[_]]
-  
+  /**
+   * Returns a new RDD whose parents are the result of applying g to this RDD's parents. This makes
+   * it possible to transform the RDD dependency graph.
+   */
+  def mapDependencies(g: RDD ~> RDD): RDD[T]
+
   // Optionally overridden by subclasses to specify how they are partitioned
   val partitioner: Option[Partitioner] = None
 
@@ -293,6 +298,7 @@ class MappedRDD[U: ClassManifest, T: ClassManifest](
   
   override def splits = prev.splits
   override val dependencies = List(new OneToOneDependency(prev))
+  override def mapDependencies(g: RDD ~> RDD) = new MappedRDD(g(prev), f)
   override def compute(split: Split) = prev.iterator(split).map(f)
   reportCreation()
 }
@@ -304,6 +310,7 @@ class FlatMappedRDD[U: ClassManifest, T: ClassManifest](
   
   override def splits = prev.splits
   override val dependencies = List(new OneToOneDependency(prev))
+  override def mapDependencies(g: RDD ~> RDD) = new FlatMappedRDD(g(prev), f)
   override def compute(split: Split) = prev.iterator(split).flatMap(f)
   reportCreation()
 }
@@ -311,6 +318,7 @@ class FlatMappedRDD[U: ClassManifest, T: ClassManifest](
 class FilteredRDD[T: ClassManifest](prev: RDD[T], f: T => Boolean) extends RDD[T](prev.context) {
   override def splits = prev.splits
   override val dependencies = List(new OneToOneDependency(prev))
+  override def mapDependencies(g: RDD ~> RDD) = new FilteredRDD(g(prev), f)
   override def compute(split: Split) = prev.iterator(split).filter(f)
   reportCreation()
 }
@@ -318,6 +326,7 @@ class FilteredRDD[T: ClassManifest](prev: RDD[T], f: T => Boolean) extends RDD[T
 class GlommedRDD[T: ClassManifest](prev: RDD[T]) extends RDD[Array[T]](prev.context) {
   override def splits = prev.splits
   override val dependencies = List(new OneToOneDependency(prev))
+  override def mapDependencies(g: RDD ~> RDD) = new GlommedRDD(g(prev))
   override def compute(split: Split) = Array(prev.iterator(split).toArray).iterator
   reportCreation()
 }
@@ -329,6 +338,7 @@ class MapPartitionsRDD[U: ClassManifest, T: ClassManifest](
   
   override def splits = prev.splits
   override val dependencies = List(new OneToOneDependency(prev))
+  override def mapDependencies(g: RDD ~> RDD) = new MapPartitionsRDD(g(prev), f)
   override def compute(split: Split) = f(prev.iterator(split))
   reportCreation()
 }

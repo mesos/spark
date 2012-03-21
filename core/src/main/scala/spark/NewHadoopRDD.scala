@@ -91,6 +91,8 @@ class NewHadoopRDD[K, V](
 
   override val dependencies: List[Dependency[_]] = Nil
 
+  override def mapDependencies(g: RDD ~> RDD) = this
+
   private def writeObject(stream: java.io.ObjectOutputStream) {
     stream.defaultWriteObject()
     stream match {

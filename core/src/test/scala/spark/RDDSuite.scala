@@ -2,7 +2,7 @@ package spark
 
 import scala.collection.mutable.HashMap
 import org.scalatest.FunSuite
-import SparkContext._
+import spark.SparkContext._
 
 class RDDSuite extends FunSuite {
   test("basic operations") {
@@ -41,5 +41,28 @@ class RDDSuite extends FunSuite {
     val result = pairs.aggregate(emptyMap)(mergeElement, mergeMaps)
     assert(result.toSet === Set(("a", 6), ("b", 2), ("c", 5)))
     sc.stop()
+  }
+
+  test("mapDependencies") {
+    // Make an RDD graph:
+    // nums <- doubled <- doubledAgain
+    val sc = new SparkContext("local", "test")
+    val nums = sc.makeRDD(Array(1, 2, 3))
+    val doubled = nums.map(_ * 2)
+    var doubledAgain = doubled.map(_ * 2)
+
+    // Sanity check
+    assert(doubledAgain.collect.toList === List(4, 8, 12))
+
+    // Insert a transformation between doubled and doubledAgain:
+    // nums <- doubled <- *new RDD* <- doubledAgain
+    doubledAgain = doubledAgain.mapDependencies(new (RDD ~> RDD) {
+      def apply[T](dependency: RDD[T]): RDD[T] = {
+        doubled.map(_ + 1).asInstanceOf[RDD[T]]
+      }
+    })
+
+    // Check that it worked
+    assert(doubledAgain.collect.toList === List(6, 10, 14))
   }
 }

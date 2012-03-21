@@ -41,6 +41,8 @@ class CoGroupedRDD[K](rdds: Seq[RDD[(_, _)]], part: Partitioner)
     }
     deps.toList
   }
+
+  override def mapDependencies(g: RDD ~> RDD) = new CoGroupedRDD(rdds.map(rdd => g(rdd)), part)
   
   @transient
   private var splits_ : Array[Split] = {
