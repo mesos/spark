@@ -11,7 +11,7 @@ import it.unimi.dsi.fastutil.io.FastBufferedOutputStream
 class ShuffleMapTask(
     runId: Int,
     stageId: Int,
-    rdd: RDD[_], 
+    val rdd: RDD[_],
     dep: ShuffleDependency[_,_,_],
     val partition: Int, 
     locs: Seq[String])
@@ -20,12 +20,14 @@ class ShuffleMapTask(
   
   val split = rdd.splits(partition)
 
-  override def run (attemptId: Int): String = {
+  override def input: Iterator[_] = rdd.iterator(split)
+
+  override def run(attemptId: Int, input: Iterator[_]): String = {
     val numOutputSplits = dep.partitioner.numPartitions
     val aggregator = dep.aggregator.asInstanceOf[Aggregator[Any, Any, Any]]
     val partitioner = dep.partitioner.asInstanceOf[Partitioner]
     val buckets = Array.tabulate(numOutputSplits)(_ => new JHashMap[Any, Any])
-    for (elem <- rdd.iterator(split)) {
+    for (elem <- input) {
       val (k, v) = elem.asInstanceOf[(Any, Any)]
       var bucketId = partitioner.getPartition(k)
       val bucket = buckets(bucketId)

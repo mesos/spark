@@ -30,6 +30,10 @@ export SPARK_MEM  # So that the process sees it and can report it to Mesos
 JAVA_OPTS="$SPARK_JAVA_OPTS"
 JAVA_OPTS+=" -Djava.library.path=$SPARK_LIBRARY_PATH:$FWDIR/lib:$FWDIR/src/main/native:$MESOS_LIBRARY_PATH"
 JAVA_OPTS+=" -Xms$SPARK_MEM -Xmx$SPARK_MEM"
+# Enable debugging if appropriate
+if [ "x$SPARK_DEBUG_OPTS" != "x" ] ; then
+  JAVA_OPTS+=" $SPARK_DEBUG_OPTS"
+fi
 # Load extra JAVA_OPTS from conf/java-opts, if it exists
 if [ -e $FWDIR/conf/java-opts ] ; then
   JAVA_OPTS+=" `cat $FWDIR/conf/java-opts`"
