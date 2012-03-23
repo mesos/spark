@@ -171,6 +171,7 @@ class EventLoggingSuite extends FunSuite {
     val sc2 = makeSparkContext(eventLog)
     val r = new EventLogReader(sc2, Some(eventLog.getAbsolutePath))
     r.assert(r.rdds(1).asInstanceOf[RDD[Double]], (x: Double) => !x.isNaN)
+    r.assert(r.rdds(1).asInstanceOf[RDD[Double]], (x: Double) => true) // another assertion on the same RDD
     r.assert(r.rdds(2).asInstanceOf[RDD[Double]], (x: Double, y: Double) => x + y, (x: Double) => x > 0)
     r.rdds(2).foreach(x => {}) // Force assertions to be checked
     sc2.stop()

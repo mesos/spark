@@ -3,7 +3,7 @@ package spark
 import com.google.common.io.Files
 import java.io._
 import scala.collection.JavaConversions._
-import scala.collection.mutable.ArrayBuffer
+import scala.collection.mutable
 
 /**
  * Reads events from an event log on disk and processes them.
@@ -14,15 +14,18 @@ class EventLogReader(sc: SparkContext, eventLogPath: Option[String] = None) {
     file = new File(elp)
     if file.exists
   } yield new EventLogInputStream(new FileInputStream(file), sc)
-  val events = new ArrayBuffer[EventLogEntry]
-  private val _rdds: ArrayBuffer[RDD[_]] = new ArrayBuffer[RDD[_]]
+  val events = new mutable.ArrayBuffer[EventLogEntry]
+  /** List of RDDs indexed by their canonical ID. */
+  private val _rdds = new mutable.ArrayBuffer[RDD[_]]
+  /** Map of RDD ID to canonical RDD ID (reverse of _rdds). */
+  private val rddIdToCanonical = new mutable.HashMap[Int, Int]
   loadNewEvents()
 
   // Enable checksum verification of loaded RDDs as they are computed
   for (w <- sc.env.eventReporter.eventLogWriter)
     w.enableChecksumVerification(this)
 
-  val checksumMismatches = new ArrayBuffer[(ChecksumEvent, ChecksumEvent)]
+  val checksumMismatches = new mutable.ArrayBuffer[(ChecksumEvent, ChecksumEvent)]
 
   /** List of RDDs from the event log, indexed by their IDs. */
   def rdds = _rdds.readOnly
@@ -198,6 +201,7 @@ class EventLogReader(sc: SparkContext, eventLogPath: Option[String] = None) {
             case RDDCreation(rdd, location) =>
               sc.updateRddId(rdd.id)
               _rdds += rdd
+              rddIdToCanonical(rdd.id) = rdd.id
             case _ => {}
           }
         }
@@ -213,14 +217,18 @@ class EventLogReader(sc: SparkContext, eventLogPath: Option[String] = None) {
 
   /** Replaces rdd with newRDD in the dependency graph. */
   private def replace[T: ClassManifest](rdd: RDD[T], newRDD: RDD[T]) {
-    val rddIndex = _rdds.indexOf(rdd)
-    _rdds(rddIndex) = newRDD
-    for (descendantRddIndex <- (rddIndex + 1) until _rdds.length) {
-      _rdds(descendantRddIndex) = _rdds(descendantRddIndex).mapDependencies(new (RDD ~> RDD) {
+    val canonicalId = rddIdToCanonical(rdd.id)
+    _rdds(canonicalId) = newRDD
+    rddIdToCanonical(newRDD.id) = canonicalId
+
+    for (descendantRddIndex <- (canonicalId + 1) until _rdds.length) {
+      val updatedRDD = _rdds(descendantRddIndex).mapDependencies(new (RDD ~> RDD) {
         def apply[U](dependency: RDD[U]): RDD[U] = {
-          _rdds(dependency.id).asInstanceOf[RDD[U]]
+          _rdds(rddIdToCanonical(dependency.id)).asInstanceOf[RDD[U]]
         }
       })
+      _rdds(descendantRddIndex) = updatedRDD
+      rddIdToCanonical(updatedRDD.id) = descendantRddIndex
     }
   }
 
