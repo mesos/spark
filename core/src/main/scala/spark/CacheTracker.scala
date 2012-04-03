@@ -58,6 +58,7 @@ class CacheTracker(isMaster: Boolean, theCache: Cache) extends Logging {
   
   if (isMaster) {
     val actor = actorOf(new CacheTrackerActor)
+    actor.start()
     trackerActor = actor
     remote.register("CacheTracker", actor)
   } else {
@@ -91,8 +92,7 @@ class CacheTracker(isMaster: Boolean, theCache: Cache) extends Logging {
   }
   
   // Gets or computes an RDD split
-  def getOrCompute[T](rdd: RDD[T], split: Split)(implicit m: ClassManifest[T])
-      : Iterator[T] = {
+  def getOrCompute[T](rdd: RDD[T], split: Split)(implicit m: ClassManifest[T]): Iterator[T] = {
     val key = (rdd.id, split.index)
     logInfo("CachedRDD partition key is " + key)
     val cachedVal = cache.get(key)

@@ -5,7 +5,8 @@ class SparkEnv (
   val serializer: Serializer,
   val cacheTracker: CacheTracker,
   val mapOutputTracker: MapOutputTracker,
-  val shuffleFetcher: ShuffleFetcher
+  val shuffleFetcher: ShuffleFetcher,
+  val shuffleManager: ShuffleManager
 )
 
 object SparkEnv {
@@ -20,7 +21,7 @@ object SparkEnv {
   }
 
   def createFromSystemProperties(isMaster: Boolean): SparkEnv = {
-    val cacheClass = System.getProperty("spark.cache.class", "spark.SoftReferenceCache")
+    val cacheClass = System.getProperty("spark.cache.class", "spark.BoundedMemoryCache")
     val cache = Class.forName(cacheClass).newInstance().asInstanceOf[Cache]
     
     val serializerClass = System.getProperty("spark.serializer", "spark.JavaSerializer")
@@ -30,9 +31,13 @@ object SparkEnv {
 
     val mapOutputTracker = new MapOutputTracker(isMaster)
 
-    val shuffleFetcherClass = System.getProperty("spark.shuffle.fetcher", "spark.SimpleShuffleFetcher")
-    val shuffleFetcher = Class.forName(shuffleFetcherClass).newInstance().asInstanceOf[ShuffleFetcher]
+    val shuffleFetcherClass = 
+      System.getProperty("spark.shuffle.fetcher", "spark.SimpleShuffleFetcher")
+    val shuffleFetcher = 
+      Class.forName(shuffleFetcherClass).newInstance().asInstanceOf[ShuffleFetcher]
 
-    new SparkEnv(cache, serializer, cacheTracker, mapOutputTracker, shuffleFetcher)
+    val shuffleMgr = new ShuffleManager()
+
+    new SparkEnv(cache, serializer, cacheTracker, mapOutputTracker, shuffleFetcher, shuffleMgr)
   }
 }

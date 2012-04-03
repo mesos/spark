@@ -36,6 +36,7 @@ class MapOutputTracker(isMaster: Boolean) extends Logging {
   
   if (isMaster) {
     val actor = actorOf(new MapOutputTrackerActor(serverUris))
+    actor.start()
     trackerActor = actor
     remote.register("MapOutputTracker", actor)
   } else {
@@ -43,13 +44,16 @@ class MapOutputTracker(isMaster: Boolean) extends Logging {
     val port = System.getProperty("spark.master.port").toInt
     trackerActor = remote.actorFor("MapOutputTracker", host, port)
   }
-  
-  def registerMapOutput(shuffleId: Int, numMaps: Int, mapId: Int, serverUri: String) {
-    var array = serverUris.get(shuffleId)
-    if (array == null) {
-      array = Array.fill[String](numMaps)(null)
-      serverUris.put(shuffleId, array)
+
+  def registerShuffle(shuffleId: Int, numMaps: Int) {
+    if (serverUris.get(shuffleId) != null) {
+      throw new IllegalArgumentException("Shuffle ID " + shuffleId + " registered twice")
     }
+    serverUris.put(shuffleId, new Array[String](numMaps))
+  }
+  
+  def registerMapOutput(shuffleId: Int, mapId: Int, serverUri: String) {
+    var array = serverUris.get(shuffleId)
     array.synchronized {
       array(mapId) = serverUri
     }
@@ -63,8 +67,9 @@ class MapOutputTracker(isMaster: Boolean) extends Logging {
     var array = serverUris.get(shuffleId)
     if (array != null) {
       array.synchronized {
-        if (array(mapId) == serverUri)
+        if (array(mapId) == serverUri) {
           array(mapId) = null
+        }
       }
       incrementGeneration()
     } else {
@@ -84,7 +89,11 @@ class MapOutputTracker(isMaster: Boolean) extends Logging {
         if (fetching.contains(shuffleId)) {
           // Someone else is fetching it; wait for them to be done
           while (fetching.contains(shuffleId)) {
-            try {fetching.wait()} catch {case _ =>}
+            try {
+              fetching.wait()
+            } catch {
+              case _ =>
+            }
           }
           return serverUris.get(shuffleId)
         } else {

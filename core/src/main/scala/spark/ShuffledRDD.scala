@@ -1,7 +1,6 @@
 package spark
 
-import scala.collection.mutable.HashMap
-
+import java.util.{HashMap => JHashMap}
 
 class ShuffledRDDSplit(val idx: Int) extends Split {
   override val index = idx
@@ -9,15 +8,15 @@ class ShuffledRDDSplit(val idx: Int) extends Split {
 }
 
 class ShuffledRDD[K, V, C](
-  parent: RDD[(K, V)],
-  aggregator: Aggregator[K, V, C],
-  part : Partitioner)
-extends RDD[(K, C)](parent.context) {
+    parent: RDD[(K, V)],
+    aggregator: Aggregator[K, V, C],
+    part : Partitioner) 
+  extends RDD[(K, C)](parent.context) {
   //override val partitioner = Some(part)
   override val partitioner = Some(part)
   
-  @transient val splits_ =
-    Array.tabulate[Split](part.numPartitions)(i => new ShuffledRDDSplit(i))
+  @transient
+  val splits_ = Array.tabulate[Split](part.numPartitions)(i => new ShuffledRDDSplit(i))
 
   override def splits = splits_
   
@@ -27,15 +26,26 @@ extends RDD[(K, C)](parent.context) {
   override val dependencies = List(dep)
 
   override def compute(split: Split): Iterator[(K, C)] = {
-    val combiners = new HashMap[K, C]
+    val combiners = new JHashMap[K, C]
     def mergePair(k: K, c: C) {
-      combiners(k) = combiners.get(k) match {
-        case Some(oldC) => aggregator.mergeCombiners(oldC, c)
-        case None => c
+      val oldC = combiners.get(k)
+      if (oldC == null) {
+        combiners.put(k, c)
+      } else {
+        combiners.put(k, aggregator.mergeCombiners(oldC, c))
       }
     }
     val fetcher = SparkEnv.get.shuffleFetcher
     fetcher.fetch[K, C](dep.shuffleId, split.index, mergePair)
-    combiners.iterator
+    return new Iterator[(K, C)] {
+      var iter = combiners.entrySet().iterator()
+
+      def hasNext(): Boolean = iter.hasNext()
+
+      def next(): (K, C) = {
+        val entry = iter.next()
+        (entry.getKey, entry.getValue)
+      }
+    }
   }
 }

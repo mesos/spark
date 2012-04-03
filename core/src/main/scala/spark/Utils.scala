@@ -35,7 +35,7 @@ object Utils {
     return ois.readObject.asInstanceOf[T]
   }
 
-  def isAlpha(c: Char) = {
+  def isAlpha(c: Char): Boolean = {
     (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')
   }
 
@@ -59,16 +59,15 @@ object Utils {
   }
 
   // Create a temporary directory inside the given parent directory
-  def createTempDir(root: String = System.getProperty("java.io.tmpdir")): File =
-  {
+  def createTempDir(root: String = System.getProperty("java.io.tmpdir")): File = {
     var attempts = 0
     val maxAttempts = 10
     var dir: File = null
     while (dir == null) {
       attempts += 1
       if (attempts > maxAttempts) {
-        throw new IOException("Failed to create a temp directory " +
-                              "after " + maxAttempts + " attempts!")
+        throw new IOException("Failed to create a temp directory after " + maxAttempts + 
+            " attempts!")
       }
       try {
         dir = new File(root, "spark-" + UUID.randomUUID.toString)
@@ -116,12 +115,12 @@ object Utils {
   }
 
   /**
-   * Get the local host's IP address in dotted-quad format (e.g. 1.2.3.4)
+   * Get the local host's IP address in dotted-quad format (e.g. 1.2.3.4).
    */
   def localIpAddress(): String = InetAddress.getLocalHost.getHostAddress
   
   /**
-   * Returns a standard ThreadFactory except all threads are daemons
+   * Returns a standard ThreadFactory except all threads are daemons.
    */
   private def newDaemonThreadFactory: ThreadFactory = {
     new ThreadFactory {
@@ -134,11 +133,10 @@ object Utils {
   }
 
   /**
-   * Wrapper over newCachedThreadPool
+   * Wrapper over newCachedThreadPool.
    */
   def newDaemonCachedThreadPool(): ThreadPoolExecutor = {
-    var threadPool =
-      Executors.newCachedThreadPool.asInstanceOf[ThreadPoolExecutor]
+    var threadPool = Executors.newCachedThreadPool.asInstanceOf[ThreadPoolExecutor]
 
     threadPool.setThreadFactory (newDaemonThreadFactory)
 
@@ -146,11 +144,10 @@ object Utils {
   }
 
   /**
-   * Wrapper over newFixedThreadPool
+   * Wrapper over newFixedThreadPool.
    */
   def newDaemonFixedThreadPool(nThreads: Int): ThreadPoolExecutor = {
-    var threadPool =
-      Executors.newFixedThreadPool(nThreads).asInstanceOf[ThreadPoolExecutor]
+    var threadPool = Executors.newFixedThreadPool(nThreads).asInstanceOf[ThreadPoolExecutor]
 
     threadPool.setThreadFactory(newDaemonThreadFactory)
 
@@ -158,9 +155,23 @@ object Utils {
   }
 
   /**
-   * Get the local machine's hostname
+   * Get the local machine's hostname.
    */
   def localHostName(): String = {
     return InetAddress.getLocalHost().getHostName
+  }
+
+  /**
+   * Delete a file or directory and its contents recursively.
+   */
+  def deleteRecursively(file: File) {
+    if (file.isDirectory) {
+      for (child <- file.listFiles()) {
+        deleteRecursively(child)
+      }
+    }
+    if (!file.delete()) {
+      throw new IOException("Failed to delete: " + file)
+    }
   }
 }
