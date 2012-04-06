@@ -51,11 +51,8 @@ object SparkBuild extends Build {
       "com.ning" % "compress-lzf" % "0.8.4",
       "org.apache.hadoop" % "hadoop-core" % "0.20.2",
       "asm" % "asm-all" % "3.3.1",
-      // Akka 1.2 requires Protobuf 2.4.1; see http://groups.google.com/group/akka-user/msg/80cee7566f0b5741
-      "com.google.protobuf" % "protobuf-java" % "2.4.1",
+      "com.google.protobuf" % "protobuf-java" % "2.3.0",
       "de.javakaffee" % "kryo-serializers" % "0.9",
-      "se.scalablesolutions.akka" % "akka-actor" % "1.2",
-      "se.scalablesolutions.akka" % "akka-remote" % "1.2",
       "org.jboss.netty" % "netty" % "3.2.6.Final",
       "it.unimi.dsi" % "fastutil" % "6.4.2"
     )

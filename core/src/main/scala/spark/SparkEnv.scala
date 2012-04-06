@@ -42,25 +42,7 @@ object SparkEnv extends Logging {
 
     val shuffleMgr = new ShuffleManager()
 
-    // Initialize the Akka server on the master
-    if (isMaster) {
-      val host = System.getProperty("spark.master.host")
-      // Repeatedly try to bind to a free port
-      var foundFreePort = false
-      while (!foundFreePort) {
-        try {
-          val remoteServer = remote.start(host, Utils.freePort)
-          System.setProperty("spark.master.akkaPort", remoteServer.address.getPort.toString)
-          logInfo("Akka listening at %s:%d".format(host, remoteServer.address.getPort))
-          foundFreePort = true
-        } catch {
-          case _: ChannelException => {}
-        }
-      }
-    }
-    val akkaDispatcher = new DaemonDispatcher("dispatcher")
-
-    val eventReporter = new EventReporter(isMaster, akkaDispatcher)
+    val eventReporter = new EventReporter(isMaster)
 
     new SparkEnv(cache, serializer, cacheTracker, mapOutputTracker, shuffleFetcher, shuffleMgr, eventReporter)
   }
