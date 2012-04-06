@@ -1,6 +1,5 @@
 package spark
 
-import akka.actor.Actor._
 import org.jboss.netty.channel.ChannelException
 
 class SparkEnv (
