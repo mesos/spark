@@ -12,29 +12,75 @@ case class RDDCreation(rdd: RDD[_], location: Array[StackTraceElement]) extends 
 case class TaskSubmission(tasks: Seq[Task[_]]) extends EventLogEntry
 
 sealed trait ChecksumEvent extends EventLogEntry {
+  def key: Any
   def mismatch(other: ChecksumEvent): Boolean
+  def warningString: String
+
+  def rddId: Int
+  def partition: Int
+  def checksum: Int
 }
 
-case class TaskChecksum(tid: Int, checksum: Int) extends ChecksumEvent {
-  override def mismatch(other: ChecksumEvent) = other match {
-    case TaskChecksum(otherTid, otherChecksum) => tid == otherTid && checksum != otherChecksum
+/**
+ * Checksum of the accumulator updates of a ShuffleMapTask.
+ */
+case class ShuffleMapTaskChecksum(
+  rddId: Int,
+  partition: Int,
+  checksum: Int
+) extends ChecksumEvent {
+  def key = (rddId, partition)
+  def mismatch(other: ChecksumEvent) = other match {
+    case ShuffleMapTaskChecksum(a, b, otherChecksum) =>
+      (rddId, partition) == (a, b) && checksum != otherChecksum
     case _ => false
   }
+  def warningString =
+    ("Nondeterminism detected in accumulator updates for ShuffleMapTask " +
+     "on RDD %d, partition %d".format(rddId, partition))
 }
 
-case class ShuffleChecksum(
+/**
+ * Checksum of the output of a ResultTask. funcHash is the hash of the
+ * function used to compute the result. This is necessary because two
+ * ResultTasks with same RDD ID and partition may compute different
+ * functions.
+ */
+case class ResultTaskChecksum(
   rddId: Int,
-  shuffleId: Int,
+  partition: Int,
+  funcHash: Int,
+  checksum: Int
+) extends ChecksumEvent {
+  def key = (rddId, partition, funcHash)
+  def mismatch(other: ChecksumEvent) = other match {
+    case ResultTaskChecksum(a, b, c, otherChecksum) =>
+      (rddId, partition, funcHash) == (a, b, c) && checksum != otherChecksum
+    case _ => false
+  }
+  def warningString =
+    ("Nondeterminism detected in ResultTask " +
+     "on RDD %d, partition %d".format(rddId, partition))
+}
+
+/**
+ * Checksum of the output of a shuffle.
+ */
+case class ShuffleOutputChecksum(
+  rddId: Int,
   partition: Int,
   outputSplit: Int,
   checksum: Int
 ) extends ChecksumEvent {
-  override def mismatch(other: ChecksumEvent) = other match {
-    case ShuffleChecksum(a, b, c, d, otherChecksum) =>
-      (rddId, shuffleId, partition, outputSplit) == (a, b, c, d) && checksum != otherChecksum
-    case _ =>
-      false
+  def key = (rddId, partition, outputSplit)
+  def mismatch(other: ChecksumEvent) = other match {
+    case ShuffleOutputChecksum(a, b, c, otherChecksum) =>
+      (rddId, partition, outputSplit) == (a, b, c) && checksum != otherChecksum
+    case _ => false
   }
+  def warningString =
+    ("Nondeterminism detected in shuffle output " +
+     "on RDD %d, partition %d, output split %d".format(rddId, partition, outputSplit))
 }
 
 sealed trait AssertionFailure extends EventLogEntry

@@ -17,7 +17,7 @@ class SimpleShuffleFetcher extends ShuffleFetcher with Logging {
     for ((serverUri, index) <- serverUris.zipWithIndex) {
       splitsByUri.getOrElseUpdate(serverUri, ArrayBuffer()) += index
     }
-    for ((serverUri, inputIds) <- Utils.randomize(splitsByUri)) {
+    for ((serverUri, inputIds) <- Utils.randomize(splitsByUri, seed(shuffleId, reduceId))) {
       for (i <- inputIds) {
         try {
           val url = "%s/shuffle/%d/%d/%d".format(serverUri, shuffleId, i, reduceId)

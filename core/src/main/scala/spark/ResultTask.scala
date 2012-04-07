@@ -4,7 +4,7 @@ class ResultTask[T, U](
     runId: Int,
     stageId: Int,
     val rdd: RDD[T],
-    func: (TaskContext, Iterator[T]) => U,
+    val func: (TaskContext, Iterator[T]) => U,
     val partition: Int,
     locs: Seq[String],
     val outputId: Int)

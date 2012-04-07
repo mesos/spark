@@ -21,14 +21,16 @@ class EventLogReader(sc: SparkContext, eventLogPath: Option[String] = None) {
   private val rddIdToCanonical = new mutable.HashMap[Int, Int]
   loadNewEvents()
 
-  // Enable checksum verification of loaded RDDs as they are computed
+  // Receive new events directly from EventLogWriter, as they occur
   for (w <- sc.env.eventReporter.eventLogWriter)
-    w.enableChecksumVerification(this)
-
-  val checksumMismatches = new mutable.ArrayBuffer[(ChecksumEvent, ChecksumEvent)]
+    w.registerEventLogReader(this)
 
   /** List of RDDs from the event log, indexed by their IDs. */
   def rdds = _rdds.readOnly
+
+  /** List of checksum mismatches. */
+  def checksumMismatches: Seq[ChecksumEvent] =
+    for (w <- sc.env.eventReporter.eventLogWriter.toList; m <- w.checksumMismatches) yield m
 
   /** Prints a human-readable list of RDDs. */
   def printRDDs() {
@@ -139,7 +141,7 @@ class EventLogReader(sc: SparkContext, eventLogPath: Option[String] = None) {
         Option("-Xdebug -agentlib:jdwp=transport=dt_socket,server=y,suspend=y,address=8000")
       }
     } try {
-      val ser = SparkEnv.get.serializer.newInstance()
+      val ser = sc.env.serializer.newInstance()
       val tempDir = Files.createTempDir()
       val file = new File(tempDir, "debugTask-%d-%d".format(taskStageId, taskPartition))
       val out = ser.outputStream(new BufferedOutputStream(new FileOutputStream(file)))
@@ -196,12 +198,15 @@ class EventLogReader(sc: SparkContext, eventLogPath: Option[String] = None) {
       try {
         while (true) {
           val event = ois.readObject.asInstanceOf[EventLogEntry]
-          events += event
+          addEvent(event)
+
+          // Tell EventLogWriter about checksum events so it can do
+          // checksum verification
           event match {
-            case RDDCreation(rdd, location) =>
-              sc.updateRddId(rdd.id)
-              _rdds += rdd
-              rddIdToCanonical(rdd.id) = rdd.id
+            case c: ChecksumEvent =>
+              for (w <- sc.env.eventReporter.eventLogWriter) {
+                w.processChecksumEvent(c)
+              }
             case _ => {}
           }
         }
@@ -211,8 +216,15 @@ class EventLogReader(sc: SparkContext, eventLogPath: Option[String] = None) {
     }
   }
 
-  private[spark] def reportChecksumMismatch(recordedChecksum: ChecksumEvent, newChecksum: ChecksumEvent) {
-    checksumMismatches.append((recordedChecksum, newChecksum))
+  private[spark] def addEvent(event: EventLogEntry) {
+    events += event
+    event match {
+      case RDDCreation(rdd, location) =>
+        sc.updateRddId(rdd.id)
+        _rdds += rdd
+        rddIdToCanonical(rdd.id) = rdd.id
+      case _ => {}
+    }
   }
 
   /** Replaces rdd with newRDD in the dependency graph. */

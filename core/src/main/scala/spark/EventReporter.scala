@@ -1,9 +1,10 @@
 package spark
 
-import scala.actors._
-import scala.actors.Actor._
-import scala.actors.remote._
 import java.io._
+import scala.actors.Actor._
+import scala.actors._
+import scala.actors.remote._
+import scala.util.MurmurHash
 
 sealed trait EventReporterMessage
 case class LogEvent(entry: EventLogEntry) extends EventReporterMessage
@@ -98,13 +99,31 @@ class EventReporter(isMaster: Boolean) extends Logging {
   }
 
   /** Reports the checksum of a task's results. */
-  def reportTaskChecksum(tid: Int, checksum: Int) {
-    reporterActor !! LogEvent(TaskChecksum(tid, checksum))
+  def reportTaskChecksum(task: Task[_], result: TaskResult[_], serializedResult: Array[Byte]) {
+    if (enableChecksumming) {
+      val checksum = new MurmurHash[Byte](42) // constant seed so checksum is reproducible
+      task match {
+        case rt: ResultTask[_,_] =>
+          for (byte <- serializedResult) checksum(byte)
+          val serializedFunc = Utils.serialize(rt.func)
+          val funcChecksum = new MurmurHash[Byte](42)
+          for (byte <- serializedFunc) funcChecksum(byte)
+          reporterActor !! LogEvent(ResultTaskChecksum(rt.rdd.id, rt.partition, funcChecksum.hash, checksum.hash))
+        case smt: ShuffleMapTask =>
+          // Don't serialize the output of a ShuffleMapTask, only its
+          // accumulator updates. The output is a URI that may change.
+          val serializedAccumUpdates = Utils.serialize(result.accumUpdates)
+          for (byte <- serializedAccumUpdates) checksum(byte)
+          reporterActor !! LogEvent(ShuffleMapTaskChecksum(smt.rdd.id, smt.partition, checksum.hash))
+        case _ =>
+          logWarning("unknown task type: " + task)
+      }
+    }
   }
 
   /** Reports the checksum of a shuffle output. */
-  def reportShuffleChecksum(rdd: RDD[_], shuffleId: Int, partition: Int, outputSplit: Int, checksum: Int) {
-    reporterActor !! LogEvent(ShuffleChecksum(rdd.id, shuffleId, partition, outputSplit, checksum))
+  def reportShuffleChecksum(rdd: RDD[_], partition: Int, outputSplit: Int, checksum: Int) {
+    reporterActor !! LogEvent(ShuffleOutputChecksum(rdd.id, partition, outputSplit, checksum))
   }
 
   def stop() {

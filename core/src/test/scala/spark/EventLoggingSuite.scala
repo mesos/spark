@@ -130,11 +130,35 @@ class EventLoggingSuite extends FunSuite {
     assert(r.rdds.length === 2)
     assert(r.rdds(0).collect.toList === (1 to 4).toList)
     assert(r.rdds(1).collect.toList != collected.toList)
+    val eventLogWriter = sc2.env.eventReporter.eventLogWriter.get
     // Ensure that all checksums have gone through
     sc2.stop()
 
     // Make sure we found a checksum mismatch
-    assert(r.checksumMismatches.nonEmpty)
+    assert(eventLogWriter.checksumMismatches.nonEmpty)
+  }
+
+  test("checksum verification - no false positives") {
+    // Initialize event log
+    val tempDir = Files.createTempDir()
+    val eventLog = new File(tempDir, "eventLog")
+
+    // Make some RDDs that don't have any nondeterministic transformations
+    val sc = makeSparkContext(eventLog)
+    val rdd = sc.makeRDD(1 to 4).map(x => (x, x * x)).partitionBy(new HashPartitioner(4))
+    rdd.collect()
+    sc.stop()
+
+    // Read them back from the event log and recompute them
+    val sc2 = makeSparkContext(eventLog)
+    val r = new EventLogReader(sc2, Some(eventLog.getAbsolutePath))
+    r.rdds(r.rdds.length - 1).collect()
+    val eventLogWriter = sc2.env.eventReporter.eventLogWriter.get
+    // Ensure that all checksums have gone through
+    sc2.stop()
+
+    // Make sure we didn't find any checksum mismatches
+    assert(eventLogWriter.checksumMismatches.isEmpty)
   }
 
   test("task submission logging") {

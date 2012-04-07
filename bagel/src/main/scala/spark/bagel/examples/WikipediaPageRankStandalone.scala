@@ -10,7 +10,7 @@ import scala.xml.{XML,NodeSeq}
 
 import scala.collection.mutable.ArrayBuffer
 
-import java.io.{InputStream, OutputStream, DataInputStream, DataOutputStream}
+import java.io._
 
 object WikipediaPageRankStandalone {
   def main(args: Array[String]) {
@@ -119,11 +119,17 @@ class WPRSerializer extends spark.Serializer {
 
 class WPRSerializerInstance extends SerializerInstance {
   def serialize[T](t: T): Array[Byte] = {
-    throw new UnsupportedOperationException()
+    val bos = new ByteArrayOutputStream()
+    val out = outputStream(bos)
+    out.writeObject(t)
+    out.close()
+    bos.toByteArray
   }
 
   def deserialize[T](bytes: Array[Byte]): T = {
-    throw new UnsupportedOperationException()
+    val bis = new ByteArrayInputStream(bytes)
+    val in = inputStream(bis)
+    in.readObject().asInstanceOf[T]
   }
 
   def outputStream(s: OutputStream): SerializationStream = {
@@ -137,6 +143,7 @@ class WPRSerializerInstance extends SerializerInstance {
 
 class WPRSerializationStream(os: OutputStream) extends SerializationStream {
   val dos = new DataOutputStream(os)
+  val jss = new JavaSerializationStream(os)
 
   def writeObject[T](t: T): Unit = t match {
     case (id: String, wrapper: ArrayBuffer[_]) => wrapper(0) match {
@@ -159,6 +166,11 @@ class WPRSerializationStream(os: OutputStream) extends SerializationStream {
       dos.writeUTF(id)
       dos.writeDouble(rank)
     }
+    case _ =>
+      dos.writeInt(3) // anything else
+      dos.flush()
+      jss.writeObject(t)
+      jss.flush()
   }
 
   def flush() { dos.flush() }
@@ -167,6 +179,7 @@ class WPRSerializationStream(os: OutputStream) extends SerializationStream {
 
 class WPRDeserializationStream(is: InputStream) extends DeserializationStream {
   val dis = new DataInputStream(is)
+  val jds = new JavaDeserializationStream(is)
 
   def readObject[T](): T = {
     val typeId = dis.readInt()
@@ -190,7 +203,9 @@ class WPRDeserializationStream(is: InputStream) extends DeserializationStream {
         val id = dis.readUTF()
         val rank = dis.readDouble()
         (id, rank).asInstanceOf[T]
-     }
+      }
+      case 3 =>
+        jds.readObject()
     }
   }
 

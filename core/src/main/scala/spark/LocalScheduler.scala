@@ -1,8 +1,8 @@
 package spark
 
+import java.io.NotSerializableException
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicInteger
-import scala.util.MurmurHash
 
 /**
  * A simple Scheduler implementation that runs tasks locally in a thread pool. Optionally the 
@@ -43,18 +43,19 @@ private class LocalScheduler(threads: Int, maxFailures: Int) extends DAGSchedule
         logInfo("Size of task " + idInJob + " is " + bytes.size + " bytes")
         val deserializedTask = Utils.deserialize[Task[_]](
             bytes, Thread.currentThread.getContextClassLoader)
-        val result: Any = deserializedTask.run(attemptId)
+        val value: Any = deserializedTask.run(attemptId)
         val accumUpdates = Accumulators.values
+        val result = new TaskResult(value, accumUpdates)
 
-        // Checksum the task's results
-        if (SparkEnv.get.eventReporter.enableChecksumming) {
-          val checksum = new MurmurHash[Any](42) // constant seed so checksum is reproducible
-          checksum(result)
-          SparkEnv.get.eventReporter.reportTaskChecksum(idInJob, checksum.hash)
+        try {
+          val serializedResult = Utils.serialize(result)
+          SparkEnv.get.eventReporter.reportTaskChecksum(task, result, serializedResult)
+        } catch {
+          case _: NotSerializableException => {}
         }
 
         logInfo("Finished task " + idInJob)
-        taskEnded(task, Success, result, accumUpdates)
+        taskEnded(task, Success, value, accumUpdates)
       } catch {
         case t: Throwable => {
           logError("Exception in task " + idInJob, t)

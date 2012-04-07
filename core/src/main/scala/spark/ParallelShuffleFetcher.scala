@@ -31,7 +31,7 @@ class ParallelShuffleFetcher extends ShuffleFetcher with Logging {
     
     // Randomize them and put them in a LinkedBlockingQueue
     val serverQueue = new LinkedBlockingQueue[(String, ArrayBuffer[Int])]
-    for (pair <- Utils.randomize(inputsByUri)) {
+    for (pair <- Utils.randomize(inputsByUri, seed(shuffleId, reduceId))) {
       serverQueue.put(pair)
     }
 

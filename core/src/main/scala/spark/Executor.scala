@@ -6,7 +6,6 @@ import java.util.concurrent._
 
 import scala.actors.remote.RemoteActor
 import scala.collection.mutable.ArrayBuffer
-import scala.util.MurmurHash
 
 import com.google.protobuf.ByteString
 
@@ -74,16 +73,13 @@ class Executor extends org.apache.mesos.Executor with Logging {
         val value = task.run(tid.toInt)
         val accumUpdates = Accumulators.values
         val result = new TaskResult(value, accumUpdates)
+        val serializedResult = Utils.serialize(result)
         d.sendStatusUpdate(TaskStatus.newBuilder()
             .setTaskId(desc.getTaskId)
             .setState(TaskState.TASK_FINISHED)
-            .setData(ByteString.copyFrom(Utils.serialize(result)))
+            .setData(ByteString.copyFrom(serializedResult))
             .build())
-        if (SparkEnv.get.eventReporter.enableChecksumming) {
-          val checksum = new MurmurHash[TaskResult[Any]](42) // constant seed so checksum is reproducible
-          checksum(result)
-          SparkEnv.get.eventReporter.reportTaskChecksum(tid.toInt, checksum.hash)
-        }
+        SparkEnv.get.eventReporter.reportTaskChecksum(task, result, serializedResult)
         logInfo("Finished task ID " + tid)
       } catch {
         case ffe: FetchFailedException => {

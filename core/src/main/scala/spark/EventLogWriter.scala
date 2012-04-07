@@ -1,19 +1,18 @@
 package spark
 
 import java.io._
+import scala.collection.mutable
+import scala.collection.immutable
 
 /**
- * Writes events to an event log on disk, cooperating with EventLogReader to perform checksum
- * verification if appropriate.
+ * Writes events to an event log on disk and verifies RDD checksums.
  */
 class EventLogWriter extends Logging {
   private var eventLog: Option[EventLogOutputStream] = None
   setEventLogPath(Option(System.getProperty("spark.arthur.logPath")))
   private var eventLogReader: Option[EventLogReader] = None
-
-  def enableChecksumVerification(eventLogReader: EventLogReader) {
-    this.eventLogReader = Some(eventLogReader)
-  }
+  val checksums = new mutable.HashMap[Any, immutable.HashSet[ChecksumEvent]]
+  val checksumMismatches = new mutable.ArrayBuffer[ChecksumEvent]
 
   def setEventLogPath(eventLogPath: Option[String]) {
     eventLog =
@@ -25,24 +24,16 @@ class EventLogWriter extends Logging {
   }
 
   def log(entry: EventLogEntry) {
-    // Log the entry
     for (l <- eventLog) {
       l.writeObject(entry)
     }
 
-    // Do checksum verification if enabled. TODO: This takes O(n) time in the number of events; we
-    // should index checksum events so it takes O(1) time instead
-    for {
-      r <- eventLogReader
-      checksum @ (_x: ChecksumEvent) <- Some(entry)
-      recordedChecksum @ (_x: ChecksumEvent) <- r.events
-      if checksum mismatch recordedChecksum
-    } r.reportChecksumMismatch(recordedChecksum, checksum)
+    for (r <- eventLogReader) {
+      r.addEvent(entry)
+    }
 
-    // If the entry is an AssertionFailure, add it to the events in the EventLogReader. This makes
-    // it possible to add and check assertions while debugging.
-    for (r <- eventLogReader) entry match {
-      case f: AssertionFailure => r.events += f
+    entry match {
+      case c: ChecksumEvent => processChecksumEvent(c)
       case _ => {}
     }
   }
@@ -57,5 +48,25 @@ class EventLogWriter extends Logging {
     for (l <- eventLog) {
       l.close()
     }
+  }
+
+  private[spark] def registerEventLogReader(r: EventLogReader) {
+    eventLogReader = Some(r)
+  }
+
+  private[spark] def processChecksumEvent(c: ChecksumEvent) {
+    if (checksums.contains(c.key)) {
+      if (!checksums(c.key).contains(c)) {
+        if (checksums(c.key).exists(_.mismatch(c))) reportChecksumMismatch(c)
+        checksums(c.key) += c
+      }
+    } else {
+      checksums.put(c.key, immutable.HashSet(c))
+    }
+  }
+
+  private def reportChecksumMismatch(c: ChecksumEvent) {
+    checksumMismatches += c
+    logWarning(c.warningString)
   }
 }
