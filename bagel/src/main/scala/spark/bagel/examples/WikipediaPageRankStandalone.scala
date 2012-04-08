@@ -151,28 +151,23 @@ class WPRSerializationStream(os: OutputStream) extends SerializationStream {
   val jss = new JavaSerializationStream(os)
 
   def writeObject[T](t: T): Unit = t match {
-    case (id: String, wrapper: ArrayBuffer[_]) => wrapper(0) match {
-      case links: Array[String] => {
-        dos.writeInt(0) // links
-        dos.writeUTF(id)
-        dos.writeInt(links.length)
-        for (link <- links) {
-          dos.writeUTF(link)
-        }
+    case (id: String, ArrayBuffer(links: Array[String])) =>
+      dos.writeInt(0)
+      dos.writeUTF(id)
+      dos.writeInt(links.length)
+      for (link <- links) {
+        dos.writeUTF(link)
       }
-      case rank: Double => {
-        dos.writeInt(1) // rank
-        dos.writeUTF(id)
-        dos.writeDouble(rank)
-      }
-    }
-    case (id: String, rank: Double) => {
-      dos.writeInt(2) // rank without wrapper
+    case (id: String, ArrayBuffer(rank: Double)) =>
+      dos.writeInt(1)
       dos.writeUTF(id)
       dos.writeDouble(rank)
-    }
+    case (id: String, rank: Double) =>
+      dos.writeInt(2)
+      dos.writeUTF(id)
+      dos.writeDouble(rank)
     case _ =>
-      dos.writeInt(3) // anything else
+      dos.writeInt(3)
       dos.flush()
       jss.writeObject(t)
       jss.flush()
