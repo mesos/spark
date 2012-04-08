@@ -49,7 +49,7 @@ class BoundedMemoryCache extends Cache with Logging {
   private def getMaxBytes(): Long = {
     val memoryFractionToUse = System.getProperty(
       "spark.boundedMemoryCache.memoryFraction", "0.66").toDouble
-    (Runtime.getRuntime.totalMemory * memoryFractionToUse).toLong
+    (Runtime.getRuntime.maxMemory * memoryFractionToUse).toLong
   }
 
   /**
@@ -70,5 +70,6 @@ class BoundedMemoryCache extends Cache with Logging {
 
   protected def dropEntry(key: Any, entry: Entry) {
     logInfo("Dropping key %s of size %d to make space".format(key, entry.size))
+    SparkEnv.get.cacheTracker.dropEntry(key)
   }
 }

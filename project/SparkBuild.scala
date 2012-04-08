@@ -61,7 +61,7 @@ object SparkBuild extends Build {
   def replSettings = sharedSettings ++ Seq(
     name := "spark-repl",
     libraryDependencies <+= scalaVersion("org.scala-lang" % "scala-compiler" % _)
-  )
+  ) ++ assemblySettings ++ Seq(test in assembly := {})
 
   def examplesSettings = sharedSettings ++ Seq(
     name := "spark-examples",
