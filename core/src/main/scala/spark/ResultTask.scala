@@ -12,11 +12,9 @@ class ResultTask[T, U](
   
   val split = rdd.splits(partition)
 
-  override def input: Iterator[T] = rdd.iterator(split)
-
-  override def run(attemptId: Int, input: Iterator[_]): U = {
+  override def run(attemptId: Int): U = {
     val context = new TaskContext(stageId, partition, attemptId)
-    func(context, input.asInstanceOf[Iterator[T]])
+    func(context, rdd.iterator(split))
   }
 
   override def preferredLocations: Seq[String] = locs

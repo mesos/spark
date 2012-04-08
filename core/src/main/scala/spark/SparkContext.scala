@@ -31,8 +31,8 @@ import org.apache.hadoop.mapreduce.{Job => NewHadoopJob}
 import spark.broadcast._
 
 class SparkContext(
-    private[spark] val master: String,
-    private[spark] val frameworkName: String,
+    val master: String,
+    val frameworkName: String,
     val sparkHome: String = null,
     val jars: Seq[String] = Nil)
   extends Logging {

@@ -19,14 +19,12 @@ class ShuffleMapTask(
   
   val split = rdd.splits(partition)
 
-  override def input: Iterator[_] = rdd.iterator(split)
-
-  override def run(attemptId: Int, input: Iterator[_]): String = {
+  override def run(attemptId: Int): String = {
     val numOutputSplits = dep.partitioner.numPartitions
     val aggregator = dep.aggregator.asInstanceOf[Aggregator[Any, Any, Any]]
     val partitioner = dep.partitioner.asInstanceOf[Partitioner]
     val buckets = Array.tabulate(numOutputSplits)(_ => new JHashMap[Any, Any])
-    for (elem <- input) {
+    for (elem <- rdd.iterator(split)) {
       val (k, v) = elem.asInstanceOf[(Any, Any)]
       var bucketId = partitioner.getPartition(k)
       val bucket = buckets(bucketId)
