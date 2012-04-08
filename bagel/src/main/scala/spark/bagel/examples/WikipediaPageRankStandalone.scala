@@ -12,14 +12,19 @@ import scala.collection.mutable.ArrayBuffer
 
 import java.io._
 
+/**
+ * Runs PageRank on the articles in the  given Freebase WEX-formatted
+ * dump of Wikipedia.
+ *
+ * For best performance, use the custom serializer by setting the
+ * spark.serializer property to spark.bagel.examples.WPRSerializer.
+ */
 object WikipediaPageRankStandalone {
   def main(args: Array[String]) {
     if (args.length < 5) {
       System.err.println("Usage: WikipediaPageRankStandalone <inputFile> <threshold> <numIterations> <host> <usePartitioner>")
       System.exit(-1)
     }
-
-    System.setProperty("spark.serializer", "spark.bagel.examples.WPRSerializer")
 
     val inputFile = args(0)
     val threshold = args(1).toDouble

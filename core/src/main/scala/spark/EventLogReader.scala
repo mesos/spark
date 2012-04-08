@@ -8,7 +8,7 @@ import scala.collection.mutable
 /**
  * Reads events from an event log on disk and processes them.
  */
-class EventLogReader(sc: SparkContext, eventLogPath: Option[String] = None) {
+class EventLogReader(sc: SparkContext, eventLogPath: Option[String] = None) extends Logging {
   val objectInputStream = for {
     elp <- eventLogPath orElse { Option(System.getProperty("spark.arthur.logPath")) }
     file = new File(elp)
@@ -141,25 +141,28 @@ class EventLogReader(sc: SparkContext, eventLogPath: Option[String] = None) {
         Option("-Xdebug -agentlib:jdwp=transport=dt_socket,server=y,suspend=y,address=8000")
       }
     } try {
-      val ser = sc.env.serializer.newInstance()
+      // Precompute the parent stage RDDs so the task will be able to run immediately
+      val parentStageDeps = getParentStageDeps(rdd)
+      if (parentStageDeps.nonEmpty) {
+        val parentStageRddIds = parentStageDeps.map(_.rdd.id)
+        logInfo("Precomputing parent stages (RDD %s) for %s".format(parentStageRddIds.mkString(", "), task))
+        for (dep <- parentStageDeps) new DummyShuffledRDD(dep).foreach(x => {})
+      }
+
       val tempDir = Files.createTempDir()
       val file = new File(tempDir, "debugTask-%d-%d".format(taskStageId, taskPartition))
+      logInfo("Serializing task %s into %s".format(task, file))
+      val ser = sc.env.serializer.newInstance()
       val out = ser.outputStream(new BufferedOutputStream(new FileOutputStream(file)))
-      println("Computing input for task %s into %s".format(task, file))
-      val elems = sc.runJob(rdd, (iter: Iterator[_]) => iter.toArray, List(partition), true)
-      for (elem <- elems(0)) {
-        out.writeObject(elem)
-      }
+      out.writeObject(task)
       out.close()
 
-      println("Running task " + task)
-
       // Launch the task in a separate JVM with debug options set
-      val pb = new ProcessBuilder(List(
-        "./run", "spark.DebuggingTaskRunner", elp, taskStageId.toString,
-        taskPartition.toString, file.getPath, sc.master, sparkHome
-      ) ::: sc.jars.toList)
-      pb.environment.put("SPARK_DEBUG_OPTS", debugOptsString)
+      logInfo("Running task " + task)
+      val pb = new ProcessBuilder(List("./run", "spark.DebuggingTaskRunner", file.getPath))
+      val propertiesToCopy = List("spark.master.host", "spark.master.port")
+      val props = for (p <- propertiesToCopy) yield "-D%s=%s".format(p, System.getProperty(p))
+      pb.environment.put("SPARK_DEBUG_OPTS", debugOptsString + " " + props.mkString(" "))
       pb.redirectErrorStream(true)
       val proc = pb.start()
 
@@ -175,9 +178,9 @@ class EventLogReader(sc: SparkContext, eventLogPath: Option[String] = None) {
         }
       }.start()
       proc.waitFor()
-      println("Finished running task " + task)
+      logInfo("Finished running task " + task)
     } catch {
-      case ex => println("Failed to run task %s: %s".format(task, ex))
+      case ex => logError("Failed to run task %s".format(task), ex)
     }
   }
 
@@ -243,6 +246,32 @@ class EventLogReader(sc: SparkContext, eventLogPath: Option[String] = None) {
       rddIdToCanonical(updatedRDD.id) = descendantRddIndex
     }
   }
+
+  /**
+   * Returns a list of dependencies on ancestors to the given RDD such
+   * that once all ancestors have been computed, the contents of the
+   * given RDD can be computed without performing any more shuffles.
+   */
+  private def getParentStageDeps(rdd: RDD[_]): List[ShuffleDependency[_,_,_]] = {
+    val ancestorDeps = new mutable.HashSet[ShuffleDependency[_,_,_]]
+    val visited = new mutable.HashSet[RDD[_]]
+    def visit(r: RDD[_]) {
+      if (!visited(r)) {
+        visited += r
+        for (dep <- r.dependencies) {
+          dep match {
+            case shufDep: ShuffleDependency[_,_,_] =>
+              ancestorDeps += shufDep
+            case _ =>
+              visit(dep.rdd)
+          }
+        }
+      }
+    }
+    visit(rdd)
+    ancestorDeps.toList
+  }
+
 
   private def firstExternalElement(location: Array[StackTraceElement]) =
     (location.tail.find(!_.getClassName.matches("""spark\.[A-Z].*"""))
