@@ -126,7 +126,11 @@ private class MesosScheduler(
         throw new SparkException("Spark home is not set; set it through the spark.home system " +
         		"property, the SPARK_HOME environment variable or the SparkContext constructor")
     }
-    val execScript = new File(sparkHome, "spark-executor").getCanonicalPath
+    val execScript = if (System.getenv("SPARK_EXECUTOR_URI") != null) {
+      System.getenv("SPARK_EXECUTOR_URI")
+    } else {
+      new File(sparkHome, "spark-executor").getCanonicalPath
+    }
     val params = Params.newBuilder()
     for (key <- ENV_VARS_TO_SEND_TO_EXECUTORS) {
       if (System.getenv(key) != null) {
