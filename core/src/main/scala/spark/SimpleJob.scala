@@ -141,7 +141,7 @@ class SimpleJob(
   }
 
   // Respond to an offer of a single slave from the scheduler by finding a task
-  def slaveOffer(offer: Offer, availableCpus: Double): Option[TaskInfo] = {
+  def slaveOffer(offer: Offer, availableCpus: Double): Option[TaskDescription] = {
     if (tasksLaunched < numTasks && availableCpus >= CPUS_PER_TASK) {
       val time = System.currentTimeMillis
       val localOnly = (time - lastPreferredLaunchTime < LOCALITY_WAIT)
@@ -173,7 +173,7 @@ class SimpleJob(
           val serializedTask = Utils.serialize(task)
           logDebug("Serialized size: " + serializedTask.size)
           val taskName = "task %d:%d".format(jobId, index)
-          return Some(TaskInfo.newBuilder()
+          return Some(TaskDescription.newBuilder()
               .setTaskId(taskId)
               .setSlaveId(offer.getSlaveId)
               .setExecutor(sched.executorInfo)

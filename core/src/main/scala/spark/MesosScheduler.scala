@@ -108,8 +108,7 @@ private class MesosScheduler(
       setDaemon(true)
       override def run {
         val sched = MesosScheduler.this
-        val fwInfo = FrameworkInfo.newBuilder().setUser("").setName(frameworkName).build()
-        driver = new MesosSchedulerDriver(sched, fwInfo, master)
+        driver = new MesosSchedulerDriver(sched, frameworkName, executorInfo, master)
         try {
           val ret = driver.run()
           logInfo("driver.run() returned with code " + ret)
@@ -128,13 +127,13 @@ private class MesosScheduler(
         		"property, the SPARK_HOME environment variable or the SparkContext constructor")
     }
     val execScript = new File(sparkHome, "spark-executor").getCanonicalPath
-    val environment = Environment.newBuilder()
+    val params = Params.newBuilder()
     for (key <- ENV_VARS_TO_SEND_TO_EXECUTORS) {
       if (System.getenv(key) != null) {
-        environment.addVariables(Environment.Variable.newBuilder()
-          .setName(key)
-          .setValue(System.getenv(key))
-          .build())
+        params.addParam(Param.newBuilder()
+            .setKey("env." + key)
+            .setValue(System.getenv(key))
+            .build())
       }
     }
     val memory = Resource.newBuilder()
@@ -142,14 +141,11 @@ private class MesosScheduler(
       .setType(Value.Type.SCALAR)
       .setScalar(Value.Scalar.newBuilder().setValue(EXECUTOR_MEMORY).build())
       .build()
-    val command = CommandInfo.newBuilder()
-      .setValue(execScript)
-      .setEnvironment(environment)
-      .build()
     ExecutorInfo.newBuilder()
       .setExecutorId(ExecutorID.newBuilder().setValue("default").build())
-      .setCommand(command)
+      .setUri(execScript)
       .setData(ByteString.copyFrom(createExecArg()))
+      .setParams(params.build())
       .addResources(memory)
       .build()
   }
@@ -178,7 +174,7 @@ private class MesosScheduler(
     }
   }
 
-  override def registered(d: SchedulerDriver, frameworkId: FrameworkID, masterInfo: MasterInfo) {
+  override def registered(d: SchedulerDriver, frameworkId: FrameworkID) {
     logInfo("Registered as framework ID " + frameworkId.getValue)
     registeredLock.synchronized {
       isRegistered = true
@@ -194,10 +190,6 @@ private class MesosScheduler(
     }
   }
 
-  override def disconnected(d: SchedulerDriver) {}
-
-  override def reregistered(d: SchedulerDriver, masterInfo: MasterInfo) {}
-
   /**
    * Method called by Mesos to offer resources on slaves. We resond by asking our active jobs for 
    * tasks in FIFO order. We fill each node with tasks in a round-robin manner so that tasks are
@@ -205,7 +197,7 @@ private class MesosScheduler(
    */
   override def resourceOffers(d: SchedulerDriver, offers: JList[Offer]) {
     synchronized {
-      val tasks = offers.map(o => new JArrayList[TaskInfo])
+      val tasks = offers.map(o => new JArrayList[TaskDescription])
       val availableCpus = offers.map(o => getResource(o.getResourcesList(), "cpus"))
       val enoughMem = offers.map(o => {
         val mem = getResource(o.getResourcesList(), "mem")
@@ -292,7 +284,7 @@ private class MesosScheduler(
     }
   }
 
-  override def error(d: SchedulerDriver, message: String) {
+  override def error(d: SchedulerDriver, code: Int, message: String) {
     logError("Mesos error: " + message)
     synchronized {
       if (activeJobs.size > 0) {
@@ -378,15 +370,11 @@ private class MesosScheduler(
 
   override def frameworkMessage(
       d: SchedulerDriver, 
-      e: ExecutorID,
       s: SlaveID,
+      e: ExecutorID,
       b: Array[Byte]) {}
 
   override def slaveLost(d: SchedulerDriver, s: SlaveID) {
-    slavesWithExecutors.remove(s.getValue)
-  }
-
-  override def executorLost(d: SchedulerDriver, e: ExecutorID, s: SlaveID, status: Int) {
     slavesWithExecutors.remove(s.getValue)
   }
 

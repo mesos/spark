@@ -24,13 +24,9 @@ class Executor extends org.apache.mesos.Executor with Logging {
 
   initLogging()
 
-  override def registered(
-      driver: ExecutorDriver,
-      executorInfo: ExecutorInfo,
-      frameworkInfo: FrameworkInfo,
-      slaveInfo: SlaveInfo) {
+  override def init(driver: ExecutorDriver, args: ExecutorArgs) {
     // Read spark.* system properties from executor arg
-    val props = Utils.deserialize[Array[(String, String)]](executorInfo.getData.toByteArray)
+    val props = Utils.deserialize[Array[(String, String)]](args.getData.toByteArray)
     for ((key, value) <- props) {
       System.setProperty(key, value)
     }
@@ -52,16 +48,12 @@ class Executor extends org.apache.mesos.Executor with Logging {
     threadPool = new ThreadPoolExecutor(
         1, 128, 600, TimeUnit.SECONDS, new SynchronousQueue[Runnable])
   }
-
-  override def disconnected(d: ExecutorDriver) {}
-
-  override def reregistered(d: ExecutorDriver, s: SlaveInfo) {}
   
-  override def launchTask(d: ExecutorDriver, task: TaskInfo) {
+  override def launchTask(d: ExecutorDriver, task: TaskDescription) {
     threadPool.execute(new TaskRunner(task, d))
   }
 
-  class TaskRunner(info: TaskInfo, d: ExecutorDriver)
+  class TaskRunner(info: TaskDescription, d: ExecutorDriver)
   extends Runnable {
     override def run() = {
       val tid = info.getTaskId.getValue
@@ -162,7 +154,7 @@ class Executor extends org.apache.mesos.Executor with Logging {
     Utils.copyStream(in, out, true)
   }
 
-  override def error(d: ExecutorDriver, message: String) {
+  override def error(d: ExecutorDriver, code: Int, message: String) {
     logError("Error from Mesos: " + message)
   }
 
@@ -180,7 +172,7 @@ class Executor extends org.apache.mesos.Executor with Logging {
  */
 object Executor extends Logging {
   def main(args: Array[String]) {
-    MesosNativeLibrary.load()
+    System.loadLibrary("mesos")
     // Create a new Executor and start it running
     val exec = new Executor
     new MesosExecutorDriver(exec).run()
