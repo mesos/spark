@@ -76,9 +76,6 @@ private class MesosScheduler(
   // URIs of JARs to pass to executor
   var jarUris: String = ""
 
-  // Create an ExecutorInfo for our tasks
-  val executorInfo = createExecutorInfo()
-
   // Sorts jobs in reverse order of run ID for use in our priority queue (so lower IDs run first)
   private val jobOrdering = new Ordering[Job] {
     override def compare(j1: Job, j2: Job): Int = {
@@ -108,7 +105,7 @@ private class MesosScheduler(
       setDaemon(true)
       override def run {
         val sched = MesosScheduler.this
-        driver = new MesosSchedulerDriver(sched, frameworkName, executorInfo, master)
+        driver = new MesosSchedulerDriver(sched, frameworkName, createExecutorInfo(), master)
         try {
           val ret = driver.run()
           logInfo("driver.run() returned with code " + ret)

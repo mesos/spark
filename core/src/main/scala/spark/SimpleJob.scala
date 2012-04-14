@@ -176,7 +176,6 @@ class SimpleJob(
           return Some(TaskDescription.newBuilder()
               .setTaskId(taskId)
               .setSlaveId(offer.getSlaveId)
-              .setExecutor(sched.executorInfo)
               .setName(taskName)
               .addResources(cpuRes)
               .setData(ByteString.copyFrom(serializedTask))

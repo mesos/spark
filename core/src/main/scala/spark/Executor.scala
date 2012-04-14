@@ -116,6 +116,7 @@ class Executor extends org.apache.mesos.Executor with Logging {
     // each URL has a unique file name so that no local filenames will clash
     // in this process. This is guaranteed by MesosScheduler.
     val uris = System.getProperty("spark.jar.uris", "")
+    logInfo("spark.jar.uris = " + uris)
     val localFiles = ArrayBuffer[String]()
     for (uri <- uris.split(",").filter(_.size > 0)) {
       val url = new URL(uri)
@@ -149,6 +150,7 @@ class Executor extends org.apache.mesos.Executor with Logging {
 
   // Download a file from a given URL to the local filesystem
   private def downloadFile(url: URL, localPath: String) {
+    logInfo("Downloading " + url + " to " + localPath)
     val in = url.openStream()
     val out = new FileOutputStream(localPath)
     Utils.copyStream(in, out, true)
