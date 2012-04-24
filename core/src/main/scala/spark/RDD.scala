@@ -8,8 +8,6 @@ import java.util.Random
 import java.util.Date
 
 import scala.collection.mutable.ArrayBuffer
-import scala.collection.mutable.Map
-import scala.collection.mutable.HashMap
 
 import org.apache.hadoop.io.BytesWritable
 import org.apache.hadoop.io.NullWritable
@@ -164,6 +162,9 @@ abstract class RDD[T: ClassManifest](@transient private var sc: SparkContext) ex
   def pipe(command: String): RDD[String] = new PipedRDD(this, command)
 
   def pipe(command: Seq[String]): RDD[String] = new PipedRDD(this, command)
+
+  def pipe(command: Seq[String], env: Map[String, String]): RDD[String] =
+    new PipedRDD(this, command, env)
 
   def mapPartitions[U: ClassManifest](f: Iterator[T] => Iterator[U]): RDD[U] =
     new MapPartitionsRDD(this, sc.clean(f))

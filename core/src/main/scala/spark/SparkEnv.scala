@@ -5,6 +5,7 @@ import org.jboss.netty.channel.ChannelException
 class SparkEnv (
   val cache: Cache,
   val serializer: Serializer,
+  val closureSerializer: Serializer,
   val cacheTracker: CacheTracker,
   val mapOutputTracker: MapOutputTracker,
   val shuffleFetcher: ShuffleFetcher,
@@ -30,6 +31,11 @@ object SparkEnv extends Logging {
     val serializerClass = System.getProperty("spark.serializer", "spark.JavaSerializer")
     val serializer = Class.forName(serializerClass).newInstance().asInstanceOf[Serializer]
 
+    val closureSerializerClass =
+      System.getProperty("spark.closure.serializer", "spark.JavaSerializer")
+    val closureSerializer =
+      Class.forName(closureSerializerClass).newInstance().asInstanceOf[Serializer]
+
     val cacheTracker = new CacheTracker(isMaster, cache)
 
     val mapOutputTracker = new MapOutputTracker(isMaster)
@@ -43,6 +49,14 @@ object SparkEnv extends Logging {
 
     val eventReporter = new EventReporter(isMaster)
 
-    new SparkEnv(cache, serializer, cacheTracker, mapOutputTracker, shuffleFetcher, shuffleMgr, eventReporter)
+    new SparkEnv(
+      cache,
+      serializer,
+      closureSerializer,
+      cacheTracker,
+      mapOutputTracker,
+      shuffleFetcher,
+      shuffleMgr,
+      eventReporter)
   }
 }

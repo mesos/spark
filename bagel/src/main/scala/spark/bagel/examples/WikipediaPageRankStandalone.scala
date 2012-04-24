@@ -137,6 +137,10 @@ class WPRSerializerInstance extends SerializerInstance {
     in.readObject().asInstanceOf[T]
   }
 
+  def deserialize[T](bytes: Array[Byte], loader: ClassLoader): T = {
+    throw new UnsupportedOperationException()
+  }
+
   def outputStream(s: OutputStream): SerializationStream = {
     new WPRSerializationStream(s)
   }
