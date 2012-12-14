@@ -126,7 +126,7 @@ class DAGScheduler(taskSched: TaskScheduler) extends TaskSchedulerListener with 
   def newStage(rdd: RDD[_], shuffleDep: Option[ShuffleDependency[_,_,_]], priority: Int): Stage = {
     // Kind of ugly: need to register RDDs with the cache and map output tracker here
     // since we can't do it in the RDD constructor because # of splits is unknown
-    logDebug("Registering RDD " + rdd.id + " (" + rdd.origin + ")")
+    logInfo("Registering RDD " + rdd.id + " (" + rdd.origin + ")")
     cacheTracker.registerRDD(rdd.id, rdd.splits.size)
     if (shuffleDep != None) {
       mapOutputTracker.registerShuffle(shuffleDep.get.shuffleId, rdd.splits.size)
@@ -149,7 +149,7 @@ class DAGScheduler(taskSched: TaskScheduler) extends TaskSchedulerListener with 
         visited += r
         // Kind of ugly: need to register RDDs with the cache here since
         // we can't do it in its constructor because # of splits is unknown
-        logDebug("Registering parent RDD " + r.id + " (" + r.origin + ")")
+        logInfo("Registering parent RDD " + r.id + " (" + r.origin + ")")
         cacheTracker.registerRDD(r.id, r.splits.size)
         for (dep <- r.dependencies) {
           dep match {
@@ -252,11 +252,11 @@ class DAGScheduler(taskSched: TaskScheduler) extends TaskSchedulerListener with 
           val finalStage = newStage(finalRDD, None, runId)
           val job = new ActiveJob(runId, finalStage, func, partitions, callSite, listener)
           updateCacheLocs()
-          logDebug("Got job " + job.runId + " (" + callSite + ") with " + partitions.length +
+          logInfo("Got job " + job.runId + " (" + callSite + ") with " + partitions.length +
                   " output partitions")
-          logDebug("Final stage: " + finalStage + " (" + finalStage.origin + ")")
-          logDebug("Parents of final stage: " + finalStage.parents)
-          logDebug("Missing parents: " + getMissingParentStages(finalStage))
+          logInfo("Final stage: " + finalStage + " (" + finalStage.origin + ")")
+          logInfo("Parents of final stage: " + finalStage.parents)
+          logInfo("Missing parents: " + getMissingParentStages(finalStage))
           if (allowLocal && finalStage.parents.size == 0 && partitions.length == 1) {
             // Compute very short actions like first() or take() with no parent stages locally.
             runLocally(job)
@@ -349,7 +349,7 @@ class DAGScheduler(taskSched: TaskScheduler) extends TaskSchedulerListener with 
       val missing = getMissingParentStages(stage).sortBy(_.id)
       logDebug("missing: " + missing)
       if (missing == Nil) {
-        logDebug("Submitting " + stage + " (" + stage.origin + "), which has no missing parents")
+        logInfo("Submitting " + stage + " (" + stage.origin + "), which has no missing parents")
         submitMissingTasks(stage)
         running += stage
       } else {
@@ -382,7 +382,7 @@ class DAGScheduler(taskSched: TaskScheduler) extends TaskSchedulerListener with 
       }
     }
     if (tasks.size > 0) {
-      logDebug("Submitting " + tasks.size + " missing tasks from " + stage)
+      logInfo("Submitting " + tasks.size + " missing tasks from " + stage)
       myPending ++= tasks
       logDebug("New pending tasks: " + myPending)
       taskSched.submitTasks(
@@ -431,16 +431,16 @@ class DAGScheduler(taskSched: TaskScheduler) extends TaskSchedulerListener with 
             val stage = idToStage(smt.stageId)
             val status = event.result.asInstanceOf[MapStatus]
             val hostPort = status.address.hostPort
-            logDebug("ShuffleMapTask finished with host " + hostPort)
+            logInfo("ShuffleMapTask finished with host " + hostPort)
             if (!deadHostPorts.contains(hostPort)) {   // TODO: Make sure hostnames are consistent with Mesos
               stage.addOutputLoc(smt.partition, status)
             }
             if (running.contains(stage) && pendingTasks(stage).isEmpty) {
-              logDebug(stage + " (" + stage.origin + ") finished; looking for newly runnable stages")
+              logInfo(stage + " (" + stage.origin + ") finished; looking for newly runnable stages")
               running -= stage
-              logDebug("running: " + running)
-              logDebug("waiting: " + waiting)
-              logDebug("failed: " + failed)
+              logInfo("running: " + running)
+              logInfo("waiting: " + waiting)
+              logInfo("failed: " + failed)
               if (stage.shuffleDep != None) {
                 mapOutputTracker.registerMapOutputs(
                   stage.shuffleDep.get.shuffleId,
@@ -465,7 +465,7 @@ class DAGScheduler(taskSched: TaskScheduler) extends TaskSchedulerListener with 
                 waiting --= newlyRunnable
                 running ++= newlyRunnable
                 for (stage <- newlyRunnable.sortBy(_.id)) {
-                  logDebug("Submitting " + stage + " (" + stage.origin + "), which is now runnable")
+                  logInfo("Submitting " + stage + " (" + stage.origin + "), which is now runnable")
                   submitMissingTasks(stage)
                 }
               }
