@@ -253,13 +253,18 @@ private object Utils extends Logging {
 
   def parseHostPort(hostPort: String) : (String,  Int) = {
     val indx: Int = hostPort.lastIndexOf(':')
+    // This is potentially broken - when dealing with ipv6 addresses for example, sigh ... but then hadoop does not support ipv6 right now.
+    // For now, we assume that if port exists, then it is valid - not check if it is an int > 0
     if (-1 == indx) return (hostPort, 0)
 
     (hostPort.substring(0, indx).trim(), hostPort.substring(indx + 1).trim().toInt)
   }
 
   def addIfNoPort(hostPort: String,  port: Int) : String = {
-    // This is potentially broken - when dealing with ipv6 addresses for example, sigh ...
+    if (port <= 0) throw new IllegalArgumentException("Invalid port specified " + port);
+
+    // This is potentially broken - when dealing with ipv6 addresses for example, sigh ... but then hadoop does not support ipv6 right now.
+    // For now, we assume that if port exists, then it is valid - not check if it is an int > 0
     val indx: Int = hostPort.lastIndexOf(':')
     if (-1 != indx) return hostPort
 

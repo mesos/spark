@@ -274,7 +274,7 @@ object Client {
     new Client(args).run
   }
 
-  // copied from org.apache.hadoop.mapreduce.v2.util.MRApps
+  // Based on code from org.apache.hadoop.mapreduce.v2.util.MRApps
   def populateHadoopClasspath(conf: Configuration, env: HashMap[String, String]) {
     for (c <- conf.getStrings(YarnConfiguration.YARN_APPLICATION_CLASSPATH)) {
       Apps.addToEnvironment(env, Environment.CLASSPATH.name, c.trim)

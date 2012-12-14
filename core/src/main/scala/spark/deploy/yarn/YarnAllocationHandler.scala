@@ -19,30 +19,35 @@ object AllocationType extends Enumeration ("HOST", "RACK", "ANY") {
 }
 
 // too many params ? refactor it 'somehow' ?
-// This class is NOT expected to be MT safe ... though probably it does not need to be I guess ?
-// Need to refactor this to make it 'cleaner' ... right now, all computation is reactive : should make it more proactive and decoupled.
+// needs to be mt-safe
+// Need to refactor this to make it 'cleaner' ... right now, all computation is reactive : should make it 
+// more proactive and decoupled.
 // Note that right now, we assume all node asks as uniform in terms of capabilities and priority.
 // Particularly the priority will need ot b
-private[yarn] class YarnAllocationHandler(val conf: Configuration, val resourceManager : AMRMProtocol, val appAttemptId : ApplicationAttemptId,
+private[yarn] class YarnAllocationHandler(val conf: Configuration, val resourceManager : AMRMProtocol, 
+                                          val appAttemptId : ApplicationAttemptId,
                                           val maxWorkers: Int, val workerMemory: Int, val workerCores: Int,
-                                          // This and Set's within are immutable - make copies off it to work if required.
-                                          val preferredHostToCount: Map[String, Int], val preferredRackToCount: Map[String, Int])
+                                          val preferredHostToCount: Map[String, Int], 
+                                          val preferredRackToCount: Map[String, Int])
   extends Logging {
 
 
   // Both of these are locked on allocatedHostToContainersMap. Complementary data structures
   // allocatedHostToContainersMap : containers which are running : host, Set<containerid>
   // allocatedContainerToHostMap: container to host mapping
-  private val allocatedHostToContainersMap : HashMap[String, collection.mutable.Set[ContainerId]] = new HashMap[String, collection.mutable.Set[ContainerId]]()
+  private val allocatedHostToContainersMap : HashMap[String, collection.mutable.Set[ContainerId]] = 
+    new HashMap[String, collection.mutable.Set[ContainerId]]()
   private val allocatedContainerToHostMap : HashMap[ContainerId, String] = new HashMap[ContainerId, String]()
   // allocatedRackCount is populated ONLY if allocation happens (or decremented if this is an allocated node)
   // As with the two data structures above, tightly coupled with them, and to be locked on allocatedHostToContainersMap
   private val allocatedRackCount : HashMap[String, Int] = new HashMap[String, Int]()
 
   // containers which have been released.
-  private val releasedContainerList : CopyOnWriteArrayList[ContainerId] = new CopyOnWriteArrayList[ContainerId]()
+  private val releasedContainerList : CopyOnWriteArrayList[ContainerId] = 
+    new CopyOnWriteArrayList[ContainerId]()
   // value is irrelevant, we just need a Set actually ...
-  private val pendingReleaseContainers : ConcurrentHashMap[ContainerId, Boolean] = new ConcurrentHashMap[ContainerId, Boolean]
+  private val pendingReleaseContainers : ConcurrentHashMap[ContainerId, Boolean] = 
+    new ConcurrentHashMap[ContainerId, Boolean]
 
   private val numWorkersRunning = new AtomicInteger()
   private val workerIdCounter = new AtomicInteger()
@@ -55,9 +60,17 @@ private[yarn] class YarnAllocationHandler(val conf: Configuration, val resourceM
     container.getResource.getMemory >= workerMemory
   }
 
-  // flatten the map such that the array buffer entries are spread out across the returned value
+  // Typically, yarn returns more containers than we would have requested under ANY, this method 
+  // prioritizes how to use the allocated containers.
+  // flatten the map such that the array buffer entries are spread out across the returned value.
+  // given <host, container_count> == <h1, 5>, <h2, 3>, <h3, 2>, <h4, 1>, <h5, 1>, the return value 
+  // would be something like : h1, h2, h3, h4, h5, h1, h2, h3, h1, h2, h1, h1
+  // We then 'use' the containers in this order (consuming only the top K from this list where 
+  // K = number to be user). This is to ensure that if we have multiple eligible allocations, 
+  // then dont end up allocating all containers on a small number of hosts - increasing probability of 
+  // multiple container failure when a host goes down.
   // Note, there is bias for keys with higher number of entries in value to be picked first (by design)
-  def scatterGatherMap(map: HashMap[String, ArrayBuffer[Container]]): List[Container] = {
+  def prioritizeContainers(map: HashMap[String, ArrayBuffer[Container]]): List[Container] = {
     val _keyList : ArrayBuffer[String] = new ArrayBuffer[String](map.size)
     _keyList ++= map.keys
 
@@ -96,9 +109,10 @@ private[yarn] class YarnAllocationHandler(val conf: Configuration, val resourceM
     if (_allocatedContainers.size > 0) {
 
 
-      logInfo("Allocated " + _allocatedContainers.size + " containers, current count " + numWorkersRunning.get() +
-        ", to-be-released " + releasedContainerList + ", pendingReleaseContainers : " + pendingReleaseContainers)
-      logInfo("Cluster Resources: " + amResp.getAvailableResources)
+      logDebug("Allocated " + _allocatedContainers.size + " containers, current count " + 
+        numWorkersRunning.get() + ", to-be-released " + releasedContainerList + 
+        ", pendingReleaseContainers : " + pendingReleaseContainers)
+      logDebug("Cluster Resources: " + amResp.getAvailableResources)
 
       val hostToContainers : HashMap[String, ArrayBuffer[Container]] = new HashMap[String, ArrayBuffer[Container]]()
 
@@ -108,7 +122,8 @@ private[yarn] class YarnAllocationHandler(val conf: Configuration, val resourceM
           // allocatedContainers += container
 
           val host : String = container.getNodeId.getHost
-          val containers : ArrayBuffer[Container] = hostToContainers.getOrElseUpdate(host, new ArrayBuffer[Container]())
+          val containers : ArrayBuffer[Container] = 
+            hostToContainers.getOrElseUpdate(host, new ArrayBuffer[Container]())
 
           containers += container
         }
@@ -117,19 +132,19 @@ private[yarn] class YarnAllocationHandler(val conf: Configuration, val resourceM
       }
 
       // Find the appropriate containers to use
-      // Remove all containers which are not satisfying our requirements
-      // Slightly non trivial groupBy I guess ,,,
-      var dataLocalContainers : HashMap[String, ArrayBuffer[Container]] = new HashMap[String, ArrayBuffer[Container]]()
-      var rackLocalContainers : HashMap[String, ArrayBuffer[Container]] = new HashMap[String, ArrayBuffer[Container]]()
-      var offRackContainers : HashMap[String, ArrayBuffer[Container]] = new HashMap[String, ArrayBuffer[Container]]()
+      // Slightly non trivial groupBy I guess ...
+      var dataLocalContainers : HashMap[String, ArrayBuffer[Container]] = 
+        new HashMap[String, ArrayBuffer[Container]]()
+      var rackLocalContainers : HashMap[String, ArrayBuffer[Container]] = 
+        new HashMap[String, ArrayBuffer[Container]]()
+      var offRackContainers : HashMap[String, ArrayBuffer[Container]] = 
+        new HashMap[String, ArrayBuffer[Container]]()
 
-      // for ((candidateHost : String, containerList : ArrayBuffer[Container]) <- hostToContainers)
       for (candidateHost <- hostToContainers.keySet)
       {
         val maxExpectedHostCount = preferredHostToCount.getOrElse(candidateHost, 0)
         val requiredHostCount : Int = maxExpectedHostCount - allocatedContainersOnHost(candidateHost)
 
-        // var remainingContainers : ArrayBuffer[Container] = containerList
         var remainingContainers : ArrayBuffer[Container] = hostToContainers.get(candidateHost).getOrElse(null)
         assert(null != remainingContainers)
 
@@ -141,12 +156,15 @@ private[yarn] class YarnAllocationHandler(val conf: Configuration, val resourceM
         }
         else if (requiredHostCount > 0) {
           // container list has more containers than we need for data locality.
-          // Split into two : data local container count of (remainingContainers.size - requiredHostCount) and rest as remainingContainer
+          // Split into two : data local container count of (remainingContainers.size - requiredHostCount) 
+	  // and rest as remainingContainer
           val (dataLocal, remaining) = remainingContainers.splitAt(remainingContainers.size - requiredHostCount)
           dataLocalContainers.put(candidateHost, dataLocal)
           // remainingContainers = remaining
 
-          // yarn has nasty habit of allocating a tonne of containers on a host - discourage this : add remaining to release list.
+          // yarn has nasty habit of allocating a tonne of containers on a host - discourage this : 
+	  // add remaining to release list. If we have insufficient containers, next allocation cycle 
+	  // will reallocate (but wont treat it as data local)
           for (container : Container <- remaining) releasedContainerList.add(container.getId())
           remainingContainers = null
         }
@@ -157,7 +175,8 @@ private[yarn] class YarnAllocationHandler(val conf: Configuration, val resourceM
 
           if (null != rack){
             val maxExpectedRackCount = preferredRackToCount.getOrElse(rack, 0)
-            val requiredRackCount : Int = maxExpectedRackCount - allocatedContainersOnRack(rack) - rackLocalContainers.get(rack).getOrElse(List()).size
+            val requiredRackCount : Int = maxExpectedRackCount - allocatedContainersOnRack(rack) - 
+	      rackLocalContainers.get(rack).getOrElse(List()).size
 
 
             if (requiredRackCount >= remainingContainers.size){
@@ -168,9 +187,11 @@ private[yarn] class YarnAllocationHandler(val conf: Configuration, val resourceM
             }
             else if (requiredRackCount > 0) {
               // container list has more containers than we need for data locality.
-              // Split into two : data local container count of (remainingContainers.size - requiredRackCount) and rest as remainingContainer
+              // Split into two : data local container count of (remainingContainers.size - requiredRackCount) 
+	      // and rest as remainingContainer
               val (rackLocal, remaining) = remainingContainers.splitAt(remainingContainers.size - requiredRackCount)
-              val existingRackLocal : ArrayBuffer[Container] = rackLocalContainers.getOrElseUpdate(rack, new ArrayBuffer[Container]())
+              val existingRackLocal : ArrayBuffer[Container] = 
+	        rackLocalContainers.getOrElseUpdate(rack, new ArrayBuffer[Container]())
 
               existingRackLocal ++= rackLocal
               remainingContainers = remaining
@@ -183,14 +204,15 @@ private[yarn] class YarnAllocationHandler(val conf: Configuration, val resourceM
         }
       }
 
-      // Now that we have split the containers into various groups, go through them in order : first host local, then rack local and then any.
-      // Note that the list we create below tries to ensure that not all containers end up within a host if there are sufficiently large number of
-      // hosts/containers.
+      // Now that we have split the containers into various groups, go through them in order : 
+      // first host local, then rack local and then any.
+      // Note that the list we create below tries to ensure that not all containers end up within a host 
+      // if there are sufficiently large number of hosts/containers.
 
       val allocatedContainers : ArrayBuffer[Container] = new ArrayBuffer[Container](_allocatedContainers.size)
-      allocatedContainers ++= scatterGatherMap(dataLocalContainers)
-      allocatedContainers ++= scatterGatherMap(rackLocalContainers)
-      allocatedContainers ++= scatterGatherMap(offRackContainers)
+      allocatedContainers ++= prioritizeContainers(dataLocalContainers)
+      allocatedContainers ++= prioritizeContainers(rackLocalContainers)
+      allocatedContainers ++= prioritizeContainers(offRackContainers)
 
       // Run each of the allocated containers
       for (container : Container <- allocatedContainers) {
@@ -201,7 +223,8 @@ private[yarn] class YarnAllocationHandler(val conf: Configuration, val resourceM
         assert (container.getResource.getMemory >= workerMemory)
 
         if (numWorkersRunningNow > maxWorkers) {
-          logInfo("Ignoring container " + containerId + " at host " + workerHostname + " .. we already have required number of containers")
+          logInfo("Ignoring container " + containerId + " at host " + workerHostname + 
+	    " .. we already have required number of containers")
           releasedContainerList.add(containerId)
           // reset counter back to old value.
           numWorkersRunning.decrementAndGet()
@@ -212,8 +235,7 @@ private[yarn] class YarnAllocationHandler(val conf: Configuration, val resourceM
           val masterUrl = "akka://spark@%s:%s/user/%s".format(
             System.getProperty("spark.master.host"), System.getProperty("spark.master.port"),
             StandaloneSchedulerBackend.ACTOR_NAME)
-          // This must be a hostname and not ip right ?
-          // val workerHostname = Utils.getAddressHostName(container.getNodeId().getHost())
+
           logInfo("launching container on " + containerId + " host " + workerHostname)
           // just to be safe, simply remove it from pendingReleaseContainers. Should not be there, but ..
           pendingReleaseContainers.remove(containerId)
@@ -234,14 +256,15 @@ private[yarn] class YarnAllocationHandler(val conf: Configuration, val resourceM
           ).start()
         }
       }
-      logInfo("After allocated " + allocatedContainers.size + " containers (orig : " + _allocatedContainers.size + "), current count " + numWorkersRunning.get() +
+      logDebug("After allocated " + allocatedContainers.size + " containers (orig : " + 
+        _allocatedContainers.size + "), current count " + numWorkersRunning.get() +
         ", to-be-released " + releasedContainerList + ", pendingReleaseContainers : " + pendingReleaseContainers)
     }
 
 
     val completedContainers : java.util.List[ContainerStatus] = amResp.getCompletedContainersStatuses()
     if (completedContainers.size > 0){
-      logInfo("Completed " + completedContainers.size + " containers, current count " + numWorkersRunning.get() +
+      logDebug("Completed " + completedContainers.size + " containers, current count " + numWorkersRunning.get() +
         ", to-be-released " + releasedContainerList + ", pendingReleaseContainers : " + pendingReleaseContainers)
 
       for (completedContainer : ContainerStatus <- completedContainers){
@@ -263,7 +286,8 @@ private[yarn] class YarnAllocationHandler(val conf: Configuration, val resourceM
             val host : String = allocatedContainerToHostMap.get(containerId).getOrElse(null)
             assert (null != host)
 
-            val containerSet : collection.mutable.Set[ContainerId] = allocatedHostToContainersMap.get(host).getOrElse(null)
+            val containerSet : collection.mutable.Set[ContainerId] = 
+	      allocatedHostToContainersMap.get(host).getOrElse(null)
             assert (null != containerSet)
 
             containerSet -= containerId
@@ -282,8 +306,9 @@ private[yarn] class YarnAllocationHandler(val conf: Configuration, val resourceM
           }
         }
       }
-      logInfo("After completed " + completedContainers.size + " containers, current count " + numWorkersRunning.get() +
-        ", to-be-released " + releasedContainerList + ", pendingReleaseContainers : " + pendingReleaseContainers)
+      logDebug("After completed " + completedContainers.size + " containers, current count " + 
+        numWorkersRunning.get() + ", to-be-released " + releasedContainerList + 
+	", pendingReleaseContainers : " + pendingReleaseContainers)
     }
   }
 
@@ -305,9 +330,11 @@ private[yarn] class YarnAllocationHandler(val conf: Configuration, val resourceM
       }
     }
 
-    val requestedContainers: ArrayBuffer[ResourceRequest] = new ArrayBuffer[ResourceRequest](rackToCounts.size)
+    val requestedContainers: ArrayBuffer[ResourceRequest] = 
+      new ArrayBuffer[ResourceRequest](rackToCounts.size)
     for ((rack, count) <- rackToCounts){
-      requestedContainers ++= createResourceRequest(AllocationType.RACK, rack, count, YarnAllocationHandler.PRIORITY)
+      requestedContainers += 
+        createResourceRequest(AllocationType.RACK, rack, count, YarnAllocationHandler.PRIORITY)
     }
 
     requestedContainers.toList
@@ -335,28 +362,34 @@ private[yarn] class YarnAllocationHandler(val conf: Configuration, val resourceM
 
       // default.
     if (numWorkers <= 0 || preferredHostToCount.isEmpty) {
-      val requestedContainers: List[ResourceRequest] = createResourceRequest(AllocationType.ANY, null, numWorkers, YarnAllocationHandler.PRIORITY)
-      logInfo("Condition 1 numWorkers: " + numWorkers)
-      resourceRequests = requestedContainers
+      logDebug("numWorkers: " + numWorkers + ", host preferences ? " + preferredHostToCount.isEmpty)
+      resourceRequests = List(
+        createResourceRequest(AllocationType.ANY, null, numWorkers, YarnAllocationHandler.PRIORITY))
     }
     else {
-      // request for all hosts in preferred nodes and for numWorkers - candidates.size, request by default allocation policy.
-      val hostContainerRequests: ArrayBuffer[ResourceRequest] = new ArrayBuffer[ResourceRequest](preferredHostToCount.size)
+      // request for all hosts in preferred nodes and for numWorkers - 
+      // candidates.size, request by default allocation policy.
+      val hostContainerRequests: ArrayBuffer[ResourceRequest] = 
+        new ArrayBuffer[ResourceRequest](preferredHostToCount.size)
       for ((candidateHost: String, candidateCount: Int) <- preferredHostToCount) {
         val requiredCount = candidateCount - allocatedContainersOnHost(candidateHost)
 
-        if (requiredCount > 0) hostContainerRequests ++= createResourceRequest(AllocationType.HOST, candidateHost, requiredCount, YarnAllocationHandler.PRIORITY)
+        if (requiredCount > 0) {
+	  hostContainerRequests += 
+	    createResourceRequest(AllocationType.HOST, candidateHost, requiredCount, YarnAllocationHandler.PRIORITY)
+	}
       }
       val rackContainerRequests: List[ResourceRequest] = createRackResourceRequests(hostContainerRequests.toList)
 
-      val anyContainerRequests: List[ResourceRequest] = createResourceRequest(AllocationType.ANY, null, numWorkers, YarnAllocationHandler.PRIORITY)
+      val anyContainerRequests: ResourceRequest = 
+        createResourceRequest(AllocationType.ANY, null, numWorkers, YarnAllocationHandler.PRIORITY)
 
       val containerRequests: ArrayBuffer[ResourceRequest] =
-        new ArrayBuffer[ResourceRequest](hostContainerRequests.size + rackContainerRequests.size + anyContainerRequests.size)
+        new ArrayBuffer[ResourceRequest](hostContainerRequests.size() + rackContainerRequests.size() + 1)
 
       containerRequests ++= hostContainerRequests
       containerRequests ++= rackContainerRequests
-      containerRequests ++= anyContainerRequests
+      containerRequests += anyContainerRequests
 
       resourceRequests = containerRequests.toList
     }
@@ -372,28 +405,24 @@ private[yarn] class YarnAllocationHandler(val conf: Configuration, val resourceM
 
 
 
-    // This is just continuation of earlier code, but we should not need to keep requesting if there is no change in 'Ask' right ?
-    // Should we add check for it ?
-
     if (numWorkers > 0) {
       logInfo("Allocating " + numWorkers + " worker containers with " + workerMemory + " of memory each.")
     }
     else {
-      logInfo("Empty allocation req ..  release : " + releasedContainerList)
+      logDebug("Empty allocation req ..  release : " + releasedContainerList)
     }
 
     // debug
-    for (req : ResourceRequest <- resourceRequests) logInfo("rsrcRequest ... " + asString(req))
+    for (req : ResourceRequest <- resourceRequests) {
+      logDebug("rsrcRequest ... host : " + req.getHostName + ", numContainers : " + req.getNumContainers +
+        ", p = " + req.getPriority().getPriority + ", capability: "  + req.getCapability)
+    }
     resourceManager.allocate(req)
   }
 
-  def asString(request: ResourceRequest): String = {
-    "host : " + request.getHostName + ", numContainers : " + request.getNumContainers + ", p = " + request.getPriority().getPriority +
-      ", priority : " + request.getPriority().toString() +", capability: "  + request.getCapability
-  }
 
-
-  private def createResourceRequest(requestType: AllocationType.AllocationType, resource:String, numWorkers : Int, priority: Int) : List[ResourceRequest] = {
+  private def createResourceRequest(requestType: AllocationType.AllocationType, 
+                                    resource:String, numWorkers : Int, priority: Int) : ResourceRequest = {
 
     // If hostname specified, we need atleast two requests - node local and rack local.
     // There must be a third request - which is ANY : that will be specially handled.
@@ -407,16 +436,16 @@ private[yarn] class YarnAllocationHandler(val conf: Configuration, val resourceM
         // add to host->rack mapping
         YarnAllocationHandler.populateRackInfo(conf, hostname)
 
-        List(nodeLocal)
+        nodeLocal
       }
 
       case AllocationType.RACK => {
         val rack = resource
-        List(createResourceRequestImpl(rack, numWorkers, priority))
+        createResourceRequestImpl(rack, numWorkers, priority)
       }
 
       case AllocationType.ANY => {
-        List(createResourceRequestImpl(YarnAllocationHandler.ANY_HOST, numWorkers, priority))
+        createResourceRequestImpl(YarnAllocationHandler.ANY_HOST, numWorkers, priority)
       }
 
       case _ => throw new IllegalArgumentException("Unexpected/unsupported request type .. " + requestType)
@@ -452,7 +481,8 @@ private[yarn] class YarnAllocationHandler(val conf: Configuration, val resourceM
     if (! retval.isEmpty) {
       releasedContainerList.removeAll(retval)
       for (v <- retval) pendingReleaseContainers.put(v, true)
-      logInfo("Releasing " + retval.size + " containers. pendingReleaseContainers : " + pendingReleaseContainers)
+      logInfo("Releasing " + retval.size + " containers. pendingReleaseContainers : " + 
+        pendingReleaseContainers)
     }
 
     retval
@@ -462,15 +492,16 @@ private[yarn] class YarnAllocationHandler(val conf: Configuration, val resourceM
 object YarnAllocationHandler {
 
   val ANY_HOST = "*"
-  // all requests are issued with same priority : we do not (yet) have any distinction between request types (like map/reduce in hadoop for example)
+  // all requests are issued with same priority : we do not (yet) have any distinction between 
+  // request types (like map/reduce in hadoop for example)
   val PRIORITY = 1
   // Additional memory overhead
   val MEMORY_OVERHEAD = 128
 
   // host to rack map - saved from allocation requests
   // We are expecting this not to change.
-  // Note that it is possible for this to change : and RM will indicate that to us via update response to allocate.
-  // But we are punting on handling that for now.
+  // Note that it is possible for this to change : and RM will indicate that to us via update 
+  // response to allocate. But we are punting on handling that for now.
   private val hostToRack : ConcurrentHashMap[String, String] = new ConcurrentHashMap[String, String]()
 
   def newAllocator(conf: Configuration,
@@ -481,8 +512,8 @@ object YarnAllocationHandler {
     val (hostToCount, rackToCount) = generateNodeToWeight(conf, map)
 
 
-    new YarnAllocationHandler(conf, resourceManager, appAttemptId, args.numWorkers, args.workerMemory + MEMORY_OVERHEAD,
-      args.workerCores, hostToCount, rackToCount)
+    new YarnAllocationHandler(conf, resourceManager, appAttemptId, args.numWorkers, 
+      args.workerMemory + MEMORY_OVERHEAD, args.workerCores, hostToCount, rackToCount)
   }
 
   def newAllocator(conf: Configuration,
@@ -492,8 +523,8 @@ object YarnAllocationHandler {
 
     val (hostToCount, rackToCount) = generateNodeToWeight(conf, map)
 
-    new YarnAllocationHandler(conf, resourceManager, appAttemptId, maxWorkers, workerMemory + MEMORY_OVERHEAD,
-      workerCores, hostToCount, rackToCount)
+    new YarnAllocationHandler(conf, resourceManager, appAttemptId, maxWorkers, 
+      workerMemory + MEMORY_OVERHEAD, workerCores, hostToCount, rackToCount)
   }
 
   // A simple method to copy the split info map.

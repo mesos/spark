@@ -8,11 +8,13 @@ import org.apache.hadoop.conf.Configuration
 import scala.collection.mutable.{ArrayBuffer, HashMap, HashSet}
 
 
-// Host information about a split - pvt to class.
-class SplitInfo(val inputFormatClazz: Class[_], val hostLocation: String, val path: String, val length: Long, val underlyingSplit: Any) {
+// information about a specific split instance
+class SplitInfo(val inputFormatClazz: Class[_], val hostLocation: String, val path: String, 
+                val length: Long, val underlyingSplit: Any) {
   override def toString() : String = {
-    "SplitInfo " + super.toString + " .. inputFormatClazz " + inputFormatClazz + ", hostLocation : " + hostLocation +
-      ", path : " + path + ", length : " + length + ", underlyingSplit " + underlyingSplit
+    "SplitInfo " + super.toString + " .. inputFormatClazz " + inputFormatClazz + 
+      ", hostLocation : " + hostLocation + ", path : " + path + 
+      ", length : " + length + ", underlyingSplit " + underlyingSplit
   }
 
   override def hashCode() : Int = {
@@ -25,7 +27,8 @@ class SplitInfo(val inputFormatClazz: Class[_], val hostLocation: String, val pa
   }
 
   // This is practically useless since most of the Split's dont seem to implement equals :-(
-  // So unless there is identity equality between underlyingSplits, it will always fail even if it is pointing to same block.
+  // So unless there is identity equality between underlyingSplits, it will always fail even if it 
+  // is pointing to same block.
   override def equals(other: Any): Boolean = other match {
     case that: SplitInfo => {
       this.hostLocation == that.hostLocation && equalsWithHostIgnore(other.asInstanceOf[SplitInfo])
@@ -44,7 +47,8 @@ class SplitInfo(val inputFormatClazz: Class[_], val hostLocation: String, val pa
 
 object SplitInfo {
 
-  def toSplitInfo(inputFormatClazz: Class[_], path: String, mapredSplit: org.apache.hadoop.mapred.InputSplit) : Seq[SplitInfo] = {
+  def toSplitInfo(inputFormatClazz: Class[_], path: String, 
+                  mapredSplit: org.apache.hadoop.mapred.InputSplit) : Seq[SplitInfo] = {
     val retval = ArrayBuffer[SplitInfo]()
     val length = mapredSplit.getLength
     for (host <- mapredSplit.getLocations) {
@@ -53,7 +57,8 @@ object SplitInfo {
     retval
   }
 
-  def toSplitInfo(inputFormatClazz: Class[_], path: String, mapreduceSplit: org.apache.hadoop.mapreduce.InputSplit) : Seq[SplitInfo] = {
+  def toSplitInfo(inputFormatClazz: Class[_], path: String, 
+                  mapreduceSplit: org.apache.hadoop.mapreduce.InputSplit) : Seq[SplitInfo] = {
     val retval = ArrayBuffer[SplitInfo]()
     val length = mapreduceSplit.getLength
     for (host <- mapreduceSplit.getLocations) {
@@ -67,13 +72,12 @@ object SplitInfo {
 /**
   * Parses and holds information about inputFormat (and files) specified as an parameter.
   */
-class InputFormatInfo(val configuration: Configuration, val inputFormatClazz: Class[_], val path: String) extends Logging {
+class InputFormatInfo(val configuration: Configuration, val inputFormatClazz: Class[_], 
+                      val path: String) extends Logging {
 
-  // Validate even before we ship job to cluster.
   var mapreduceInputFormat: Boolean = false
   var mapredInputFormat: Boolean = false
-  // identify this by the input format class + path ... used to identify a block by using it in conjugation with the length (for generating a 'block-id').
-  var inputIndentifier: String = null
+
   validate()
 
   override def toString() : String = {
@@ -86,7 +90,8 @@ class InputFormatInfo(val configuration: Configuration, val inputFormatClazz: Cl
     hashCode
   }
 
-  // Since we are not doing canonicalization of path, this can be wrong ...
+  // Since we are not doing canonicalization of path, this can be wrong : like relative vs absolute path
+  // .. which is fine, this is best case effort.
   override def equals(other: Any): Boolean = other match {
     case that: InputFormatInfo => {
       // not checking config - that should be fine, right ?
@@ -101,11 +106,11 @@ class InputFormatInfo(val configuration: Configuration, val inputFormatClazz: Cl
 
     try {
       if (classOf[org.apache.hadoop.mapreduce.InputFormat[_, _]].isAssignableFrom(inputFormatClazz)) {
-        logInfo("inputformat is form mapreduce package")
+        logInfo("inputformat is from mapreduce package")
         mapreduceInputFormat = true
       }
       else if (classOf[org.apache.hadoop.mapred.InputFormat[_, _]].isAssignableFrom(inputFormatClazz)) {
-        logInfo("inputformat is form mapred package")
+        logInfo("inputformat is from mapred package")
         mapredInputFormat = true
       }
       else {
@@ -118,8 +123,6 @@ class InputFormatInfo(val configuration: Configuration, val inputFormatClazz: Cl
         throw new IllegalArgumentException("Specified inputformat " + inputFormatClazz + " cannot be found ?")
       }
     }
-    // '*' as delimiter since it cant be in classname or path.
-    this.inputIndentifier = inputFormatClazz.getName + "*" + path
   }
 
 
@@ -129,7 +132,8 @@ class InputFormatInfo(val configuration: Configuration, val inputFormatClazz: Cl
     FileInputFormat.setInputPaths(conf, path)
 
     val instance : org.apache.hadoop.mapreduce.InputFormat[_, _] =
-      ReflectionUtils.newInstance(inputFormatClazz.asInstanceOf[Class[_]], conf).asInstanceOf[org.apache.hadoop.mapreduce.InputFormat[_, _]]
+      ReflectionUtils.newInstance(inputFormatClazz.asInstanceOf[Class[_]], conf).asInstanceOf[
+        org.apache.hadoop.mapreduce.InputFormat[_, _]]
     val job : Job = new Job(conf)
 
     val retval = ArrayBuffer[SplitInfo]()
@@ -147,7 +151,8 @@ class InputFormatInfo(val configuration: Configuration, val inputFormatClazz: Cl
     FileInputFormat.setInputPaths(jobConf, path)
 
     val instance : org.apache.hadoop.mapred.InputFormat[_, _] =
-      ReflectionUtils.newInstance(inputFormatClazz.asInstanceOf[Class[_]], jobConf).asInstanceOf[org.apache.hadoop.mapred.InputFormat[_, _]]
+      ReflectionUtils.newInstance(inputFormatClazz.asInstanceOf[Class[_]], jobConf).asInstanceOf[
+        org.apache.hadoop.mapred.InputFormat[_, _]]
     // val job : JobConf = new JobConf(conf)
 
     val retval : ArrayBuffer[SplitInfo] = ArrayBuffer[SplitInfo]()
@@ -160,7 +165,8 @@ class InputFormatInfo(val configuration: Configuration, val inputFormatClazz: Cl
    }
 
   private def findPreferredLocations() : Set[SplitInfo] = {
-    logInfo("mapreduceInputFormat : " + mapreduceInputFormat + ", mapredInputFormat : " + mapredInputFormat + ", inputFormatClazz : " + inputFormatClazz)
+    logDebug("mapreduceInputFormat : " + mapreduceInputFormat + ", mapredInputFormat : " + mapredInputFormat + 
+      ", inputFormatClazz : " + inputFormatClazz)
     if (mapreduceInputFormat) {
       return prefLocsFromMapreduceInputFormat()
     }
@@ -177,14 +183,19 @@ class InputFormatInfo(val configuration: Configuration, val inputFormatClazz: Cl
 object InputFormatInfo {
   /*
     Computes the preferred locations based on input(s) and returned a location to block map.
-    Typical use of this method for allocation would follow some algo like this :
-    Make copy of this data structure.
-    a) Pick the preferred location with highest cardinality of set.
-    b) Remove it from set - attempt allocation.
-    c) Remove all blocks for this node from all other set's.
+    Typical use of this method for allocation would follow some algo like this 
+    (which is what we currently do in YARN branch) :
+    a) For each host, count number of splits hosted on that host.
+    b) Decrement the currently allocated containers on that host.
+    c) Compute rack info for each host and update rack -> count map based on (b).
+    d) Allocate nodes based on (c)
+    e) On the allocation result, ensure that we dont allocate all jobs on a single node 
+       (even if data locality on that is very high) : this is to prevent fragility of job if a single 
+       (or small set of) hosts go down.
+
     go to (a) until required nodes are not allocated.
 
-    If a node 'dies', follow similar procedure : except initialize from this map and remove all already allocated nodes blocks.
+    If a node 'dies', follow same procedure.
 
     PS: I know the wording here is weird, hopefully it makes some sense !
   */
@@ -196,7 +207,7 @@ object InputFormatInfo {
     for (inputSplit : InputFormatInfo <- formats) {
       val splits : Set[SplitInfo] = inputSplit.findPreferredLocations()
 
-      println("inputSplit " + inputSplit.toString + ", splits ... " + splits.toString)
+      // println("inputSplit " + inputSplit.toString + ", splits ... " + splits.toString)
 
       for (split : SplitInfo <- splits){
         val location = split.hostLocation
@@ -206,7 +217,7 @@ object InputFormatInfo {
       }
     }
 
-    println("preferred locations for " + formats.toString + " is " + nodeToSplit.toString)
+    // println("preferred locations for " + formats.toString + " is " + nodeToSplit.toString)
 
     nodeToSplit
   }
