@@ -61,10 +61,10 @@ class Client(conf: Configuration, args: ClientArguments) extends Logging {
     logInfo("Got Cluster metric info from ASM, numNodeManagers=" + clusterMetrics.getNumNodeManagers)
 
     val clusterNodeReports: List[NodeReport] = getNodeReports
-    logInfo("Got Cluster node info from ASM")
+    logDebug("Got Cluster node info from ASM")
     import scala.collection.JavaConversions._
     for (node : NodeReport <- clusterNodeReports) {
-      logInfo("Got node report from ASM for, nodeId=" + node.getNodeId + ", nodeAddress=" + node.getHttpAddress +
+      logDebug("Got node report from ASM for, nodeId=" + node.getNodeId + ", nodeAddress=" + node.getHttpAddress +
         ", nodeRackName=" + node.getRackName + ", nodeNumContainers=" + node.getNumContainers + ", nodeHealthStatus=" + node.getNodeHealthStatus)
     }
 
