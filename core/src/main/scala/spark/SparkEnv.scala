@@ -77,6 +77,15 @@ object SparkEnv extends Logging {
       System.setProperty("spark.master.port", boundPort.toString)
     }
 
+    // set only if unset until now.
+    if (null == System.getProperty("spark.hostname", null)) {
+      if (!isMaster){
+        // unexpected
+        Utils.logErrorWithStack("Unexpected NOT to have spark.hostname set")
+      }
+      System.setProperty("spark.hostname", hostname + ":" + boundPort)
+    }
+
     val classLoader = Thread.currentThread.getContextClassLoader
 
     // Create an instance of the class named by the given Java system property, or by

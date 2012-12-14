@@ -21,7 +21,7 @@ private[spark] class ExecutorRunner(
     val memory: Int,
     val worker: ActorRef,
     val workerId: String,
-    val hostname: String,
+    val hostPort: String,
     val sparkHome: File,
     val workDir: File)
   extends Logging {
@@ -68,7 +68,7 @@ private[spark] class ExecutorRunner(
   /** Replace variables such as {{SLAVEID}} and {{CORES}} in a command argument passed to us */
   def substituteVariables(argument: String): String = argument match {
     case "{{SLAVEID}}" => workerId
-    case "{{HOSTNAME}}" => hostname
+    case "{{HOSTNAME}}" => hostPort
     case "{{CORES}}" => cores.toString
     case other => other
   }

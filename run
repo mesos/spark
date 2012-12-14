@@ -28,11 +28,11 @@ export SPARK_MEM
 
 # Set JAVA_OPTS to be able to load native libraries and to set heap size
 JAVA_OPTS="$SPARK_JAVA_OPTS"
-JAVA_OPTS+=" -Djava.library.path=$SPARK_LIBRARY_PATH"
-JAVA_OPTS+=" -Xms$SPARK_MEM -Xmx$SPARK_MEM"
+JAVA_OPTS="$JAVA_OPTS -Djava.library.path=$SPARK_LIBRARY_PATH"
+JAVA_OPTS="$JAVA_OPTS -Xms$SPARK_MEM -Xmx$SPARK_MEM"
 # Load extra JAVA_OPTS from conf/java-opts, if it exists
 if [ -e $FWDIR/conf/java-opts ] ; then
-  JAVA_OPTS+=" `cat $FWDIR/conf/java-opts`"
+  JAVA_OPTS="$JAVA_OPTS `cat $FWDIR/conf/java-opts`"
 fi
 export JAVA_OPTS
 
@@ -43,25 +43,26 @@ BAGEL_DIR="$FWDIR/bagel"
 
 # Build up classpath
 CLASSPATH="$SPARK_CLASSPATH"
-CLASSPATH+=":$FWDIR/conf"
-CLASSPATH+=":$CORE_DIR/target/scala-$SCALA_VERSION/classes"
+CLASSPATH="$CLASSPATH:$FWDIR/conf"
+CLASSPATH="$CLASSPATH:$CORE_DIR/target/scala-$SCALA_VERSION/classes"
 if [ -n "$SPARK_TESTING" ] ; then
-  CLASSPATH+=":$CORE_DIR/target/scala-$SCALA_VERSION/test-classes"
+  CLASSPATH="$CLASSPATH:$CORE_DIR/target/scala-$SCALA_VERSION/test-classes"
 fi
-CLASSPATH+=":$CORE_DIR/src/main/resources"
-CLASSPATH+=":$REPL_DIR/target/scala-$SCALA_VERSION/classes"
-CLASSPATH+=":$EXAMPLES_DIR/target/scala-$SCALA_VERSION/classes"
+CLASSPATH="$CLASSPATH:$CORE_DIR/src/main/resources"
+CLASSPATH="$CLASSPATH:$REPL_DIR/target/scala-$SCALA_VERSION/classes"
+CLASSPATH="$CLASSPATH:$EXAMPLES_DIR/target/scala-$SCALA_VERSION/classes"
 for jar in `find $FWDIR/lib_managed/jars -name '*jar'`; do
-  CLASSPATH+=":$jar"
+  CLASSPATH="$CLASSPATH:$jar"
 done
 for jar in `find $FWDIR/lib_managed/bundles -name '*jar'`; do
-  CLASSPATH+=":$jar"
+  CLASSPATH="$CLASSPATH:$jar"
 done
 for jar in `find $REPL_DIR/lib -name '*jar'`; do
-  CLASSPATH+=":$jar"
+  CLASSPATH="$CLASSPATH:$jar"
 done
-CLASSPATH+=":$BAGEL_DIR/target/scala-$SCALA_VERSION/classes"
-export CLASSPATH # Needed for spark-shell
+CLASSPATH="$CLASSPATH:$BAGEL_DIR/target/scala-$SCALA_VERSION/classes"
+# Add hadoop conf dir - else FileSystem.*, etc fail !
+CLASSPATH="$CLASSPATH:$HADOOP_CONF_DIR"
 
 # Figure out whether to run our class with java or with the scala launcher.
 # In most cases, we'd prefer to execute our process with java because scala
@@ -73,9 +74,13 @@ if [ "$SPARK_LAUNCH_WITH_SCALA" == "1" ]; then
   RUNNER="${SCALA_HOME}/bin/scala"
   EXTRA_ARGS=""     # Java options will be passed to scala as JAVA_OPTS
 else
-  CLASSPATH+=":$SCALA_HOME/lib/scala-library.jar"
-  CLASSPATH+=":$SCALA_HOME/lib/scala-compiler.jar"
-  CLASSPATH+=":$SCALA_HOME/lib/jline.jar"
+  CLASSPATH="$CLASSPATH:$SCALA_HOME/lib/scala-library.jar"
+  CLASSPATH="$CLASSPATH:$SCALA_HOME/lib/scala-compiler.jar"
+  CLASSPATH="$CLASSPATH:$SCALA_HOME/lib/jline.jar"
+  # We need $SCALA_HOME/lib/ and $SCALA_HOME/lib/jars since some deployments have it inside it ...
+  CLASSPATH="$CLASSPATH:$SCALA_HOME/lib/jars/scala-library.jar"
+  CLASSPATH="$CLASSPATH:$SCALA_HOME/lib/jars/scala-compiler.jar"
+  CLASSPATH="$CLASSPATH:$SCALA_HOME/lib/jars/jline.jar"
   if [ -n "$JAVA_HOME" ]; then
     RUNNER="${JAVA_HOME}/bin/java"
   else
@@ -84,5 +89,6 @@ else
   # The JVM doesn't read JAVA_OPTS by default so we need to pass it in
   EXTRA_ARGS="$JAVA_OPTS"
 fi
+export CLASSPATH # Needed for spark-shell
 
 exec "$RUNNER" -cp "$CLASSPATH" $EXTRA_ARGS "$@"

@@ -57,6 +57,7 @@ if "%SPARK_LAUNCH_WITH_SCALA%" NEQ 1 goto java_runner
   goto run_spark
 :java_runner
   set CLASSPATH=%CLASSPATH%;%SCALA_HOME%\lib\scala-library.jar;%SCALA_HOME%\lib\scala-compiler.jar;%SCALA_HOME%\lib\jline.jar
+  set CLASSPATH=%CLASSPATH%;%SCALA_HOME%\lib\jars\scala-library.jar;%SCALA_HOME%\lib\jars\scala-compiler.jar;%SCALA_HOME%\lib\jars\jline.jar
   set RUNNER=java
   if not "x%JAVA_HOME%"=="x" set RUNNER=%JAVA_HOME%\bin\java
   rem The JVM doesn't read JAVA_OPTS by default so we need to pass it in

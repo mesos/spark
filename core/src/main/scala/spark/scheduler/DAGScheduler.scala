@@ -12,8 +12,6 @@ import spark._
 import spark.partial.ApproximateActionListener
 import spark.partial.ApproximateEvaluator
 import spark.partial.PartialResult
-import spark.storage.BlockManagerMaster
-import spark.storage.BlockManagerId
 
 /**
  * A Scheduler subclass that implements stage-oriented scheduling. It computes a DAG of stages for 
@@ -35,8 +33,13 @@ class DAGScheduler(taskSched: TaskScheduler) extends TaskSchedulerListener with 
   }
 
   // Called by TaskScheduler when a host fails.
-  override def hostLost(host: String) {
-    eventQueue.put(HostLost(host))
+  override def hostLost(hostPort: String) {
+    eventQueue.put(HostLost(hostPort))
+  }
+
+  // Called by TaskScheduler when a host fails.
+  override def hostGained(hostPort: String) {
+    eventQueue.put(HostGained(hostPort))
   }
 
   // Called by TaskScheduler to cancel an entier TaskSet due to repeated failures.
@@ -71,8 +74,9 @@ class DAGScheduler(taskSched: TaskScheduler) extends TaskSchedulerListener with 
   val cacheTracker = env.cacheTracker
   val mapOutputTracker = env.mapOutputTracker
 
-  val deadHosts = new HashSet[String]  // TODO: The code currently assumes these can't come back;
-                                       // that's not going to be a realistic assumption in general
+  val deadHostPorts = new HashSet[String]  // TODO: The code currently assumes these can't come back;
+                                       // that's not going to be a realistic assumption in general - though practically,
+                                       // (for yarn) since it is associated with a port, this should hold.
   
   val waiting = new HashSet[Stage] // Stages we need to run whose parents aren't done
   val running = new HashSet[Stage] // Stages we are running right now
@@ -262,8 +266,11 @@ class DAGScheduler(taskSched: TaskScheduler) extends TaskSchedulerListener with 
             submitStage(finalStage)
           }
 
-        case HostLost(host) =>
-          handleHostLost(host)
+        case HostGained(hostPort) =>
+          handleHostGained(hostPort)
+
+        case HostLost(hostPort) =>
+          handleHostLost(hostPort)
 
         case completion: CompletionEvent =>
           handleTaskCompletion(completion)
@@ -423,9 +430,9 @@ class DAGScheduler(taskSched: TaskScheduler) extends TaskSchedulerListener with 
           case smt: ShuffleMapTask =>
             val stage = idToStage(smt.stageId)
             val status = event.result.asInstanceOf[MapStatus]
-            val host = status.address.ip
-            logInfo("ShuffleMapTask finished with host " + host)
-            if (!deadHosts.contains(host)) {   // TODO: Make sure hostnames are consistent with Mesos
+            val hostPort = status.address.hostPort
+            logInfo("ShuffleMapTask finished with host " + hostPort)
+            if (!deadHostPorts.contains(hostPort)) {   // TODO: Make sure hostnames are consistent with Mesos
               stage.addOutputLoc(smt.partition, status)
             }
             if (running.contains(stage) && pendingTasks(stage).isEmpty) {
@@ -489,7 +496,7 @@ class DAGScheduler(taskSched: TaskScheduler) extends TaskSchedulerListener with 
         lastFetchFailureTime = System.currentTimeMillis() // TODO: Use pluggable clock
         // TODO: mark the host as failed only if there were lots of fetch failures on it
         if (bmAddress != null) {
-          handleHostLost(bmAddress.ip)
+          handleHostLost(bmAddress.hostPort)
         }
 
       case other =>
@@ -502,19 +509,27 @@ class DAGScheduler(taskSched: TaskScheduler) extends TaskSchedulerListener with 
    * Responds to a host being lost. This is called inside the event loop so it assumes that it can
    * modify the scheduler's internal state. Use hostLost() to post a host lost event from outside.
    */
-  def handleHostLost(host: String) {
-    if (!deadHosts.contains(host)) {
-      logInfo("Host lost: " + host)
-      deadHosts += host
-      env.blockManager.master.notifyADeadHost(host)
+  def handleHostLost(hostPort: String) {
+    if (!deadHostPorts.contains(hostPort)) {
+      logInfo("Host lost: " + hostPort)
+      deadHostPorts += hostPort
+      env.blockManager.master.notifyADeadHost(hostPort)
       // TODO: This will be really slow if we keep accumulating shuffle map stages
       for ((shuffleId, stage) <- shuffleToMapStage) {
-        stage.removeOutputsOnHost(host)
+        stage.removeOutputsOnHost(hostPort)
         val locs = stage.outputLocs.map(list => if (list.isEmpty) null else list.head).toArray
         mapOutputTracker.registerMapOutputs(shuffleId, locs, true)
       }
-      cacheTracker.cacheLost(host)
+      cacheTracker.cacheLost(hostPort)
       updateCacheLocs()
+    }
+  }
+
+  // simply remove from deadHost set if it exists ...
+  def handleHostGained(hostPort: String) {
+    if (deadHostPorts.contains(hostPort)) {
+      logInfo("Host gained which was in lost list earlier: " + hostPort)
+      deadHostPorts -= hostPort
     }
   }
   

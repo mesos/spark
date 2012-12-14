@@ -57,7 +57,16 @@ private[spark] class TaskSetManager(
   // back at the head of the stack. They are also only cleaned up lazily;
   // when a task is launched, it remains in all the pending lists except
   // the one that it was launched from, but gets removed from them later.
-  val pendingTasksForHost = new HashMap[String, ArrayBuffer[Int]]
+  val pendingTasksForHostPort = new HashMap[String, ArrayBuffer[Int]]
+
+  // List of pending tasks for each node based on rack locality. These collections are actually
+  // treated as stacks, in which new tasks are added to the end of the
+  // ArrayBuffer and removed from the end. This makes it faster to detect
+  // tasks that repeatedly fail because whenever a task failed, it is put
+  // back at the head of the stack. They are also only cleaned up lazily;
+  // when a task is launched, it remains in all the pending lists except
+  // the one that it was launched from, but gets removed from them later.
+  val pendingRackLocalTasksForHostPort = new HashMap[String, ArrayBuffer[Int]]
 
   // List containing pending tasks with no locality preferences
   val pendingTasksWithNoPrefs = new ArrayBuffer[Int]
@@ -99,24 +108,82 @@ private[spark] class TaskSetManager(
     addPendingTask(i)
   }
 
+  private def findPreferredLocations(taskPreferredLocations: Seq[String], scheduler: ClusterScheduler) : ArrayBuffer[String] = {
+    // DEBUG code
+    if (taskPreferredLocations.exists(0 != Utils.parseHostPort(_)._2)) {
+      Utils.logErrorWithStack("preferredLocation has port specified ? Unexpected ... " + taskPreferredLocations)
+    }
+
+    val retval = new ArrayBuffer[String]
+    for (aliveHostPort <- scheduler.hostPortsAlive) {
+      if (taskPreferredLocations.contains(Utils.parseHostPort(aliveHostPort)._1)) {
+        retval += aliveHostPort
+      }
+    }
+    retval
+  }
+
+  private def findRackLocalPreferredLocations(taskPreferredLocations: Seq[String], scheduler: ClusterScheduler) : ArrayBuffer[String] = {
+    // DEBUG code
+    if (taskPreferredLocations.exists(0 != Utils.parseHostPort(_)._2)) {
+      Utils.logErrorWithStack("preferredLocation has port specified ? Unexpected ... " + taskPreferredLocations)
+    }
+
+    val preferredRacks = new HashSet[String]()
+    for (preferredHost <- taskPreferredLocations) {
+      val rack = sched.getRackForHost(preferredHost)
+      if (None != rack) preferredRacks += rack.get
+    }
+
+    val retval = new ArrayBuffer[String]
+
+    if (! preferredRacks.isEmpty) {
+      for (aliveHostPort <- scheduler.hostPortsAlive) {
+        val rack = scheduler.getRackForHost(aliveHostPort)
+        if (None != rack){
+          if (preferredRacks.contains(rack.get)) {
+            retval += aliveHostPort
+          }
+        }
+      }
+    }
+    retval
+  }
+
   // Add a task to all the pending-task lists that it should be on.
-  def addPendingTask(index: Int) {
-    val locations = tasks(index).preferredLocations.toSet & sched.hostsAlive
+  private def addPendingTask(index: Int) {
+    val locations = findPreferredLocations(tasks(index).preferredLocations, sched)
     if (locations.size == 0) {
       pendingTasksWithNoPrefs += index
     } else {
-      for (host <- locations) {
-        val list = pendingTasksForHost.getOrElseUpdate(host, ArrayBuffer())
+      for (hostPort <- locations) {
+        val list = pendingTasksForHostPort.getOrElseUpdate(hostPort, ArrayBuffer())
         list += index
       }
     }
+
+    // rack locality
+    val rackLocalLocations = findRackLocalPreferredLocations(tasks(index).preferredLocations, sched)
+    if (! locations.isEmpty && ! rackLocalLocations.isEmpty) {
+      for (rackLocalHostPort <- rackLocalLocations) {
+        val list = pendingRackLocalTasksForHostPort.getOrElseUpdate(rackLocalHostPort, ArrayBuffer())
+        list += index
+      }
+    }
+
     allPendingTasks += index
   }
 
   // Return the pending tasks list for a given host, or an empty list if
   // there is no map entry for that host
-  def getPendingTasksForHost(host: String): ArrayBuffer[Int] = {
-    pendingTasksForHost.getOrElse(host, ArrayBuffer())
+  private def getPendingTasksForHost(hostPort: String): ArrayBuffer[Int] = {
+    pendingTasksForHostPort.getOrElse(hostPort, ArrayBuffer())
+  }
+
+  // Return the pending tasks list for a given host, or an empty list if
+  // there is no map entry for that host
+  private def getRackLocalPendingTasksForHost(hostPort: String): ArrayBuffer[Int] = {
+    pendingRackLocalTasksForHostPort.getOrElse(hostPort, ArrayBuffer())
   }
 
   // Dequeue a pending task from the given list and return its index.
@@ -137,20 +204,22 @@ private[spark] class TaskSetManager(
   // Return a speculative task for a given host if any are available. The task should not have an
   // attempt running on this host, in case the host is slow. In addition, if localOnly is set, the
   // task must have a preference for this host (or no preferred locations at all).
-  def findSpeculativeTask(host: String, localOnly: Boolean): Option[Int] = {
+  def findSpeculativeTask(hostPort: String, localOnly: Boolean): Option[Int] = {
+    val host : String = Utils.parseHostPort(hostPort)._1;
+
     speculatableTasks.retain(index => !finished(index)) // Remove finished tasks from set
     val localTask = speculatableTasks.find {
         index =>
-          val locations = tasks(index).preferredLocations.toSet & sched.hostsAlive
-          val attemptLocs = taskAttempts(index).map(_.host)
-          (locations.size == 0 || locations.contains(host)) && !attemptLocs.contains(host)
+          val locations = findPreferredLocations(tasks(index).preferredLocations, sched)
+          val attemptLocs = taskAttempts(index).map(_.hostPort)
+          (locations.size == 0 || locations.contains(hostPort)) && !attemptLocs.contains(hostPort)
       }
     if (localTask != None) {
       speculatableTasks -= localTask.get
       return localTask
     }
     if (!localOnly && speculatableTasks.size > 0) {
-      val nonLocalTask = speculatableTasks.find(i => !taskAttempts(i).map(_.host).contains(host))
+      val nonLocalTask = speculatableTasks.find(i => !taskAttempts(i).map(_.hostPort).contains(hostPort))
       if (nonLocalTask != None) {
         speculatableTasks -= nonLocalTask.get
         return nonLocalTask
@@ -161,10 +230,14 @@ private[spark] class TaskSetManager(
 
   // Dequeue a pending task for a given node and return its index.
   // If localOnly is set to false, allow non-local tasks as well.
-  def findTask(host: String, localOnly: Boolean): Option[Int] = {
-    val localTask = findTaskFromList(getPendingTasksForHost(host))
+  private def findTask(hostPort: String, localOnly: Boolean): Option[Int] = {
+    val localTask = findTaskFromList(getPendingTasksForHost(hostPort))
     if (localTask != None) {
       return localTask
+    }
+    val rackLocalTask = findTaskFromList(getRackLocalPendingTasksForHost(hostPort))
+    if (rackLocalTask != None) {
+      return rackLocalTask
     }
     val noPrefTask = findTaskFromList(pendingTasksWithNoPrefs)
     if (noPrefTask != None) {
@@ -177,36 +250,69 @@ private[spark] class TaskSetManager(
       }
     }
     // Finally, if all else has failed, find a speculative task
-    return findSpeculativeTask(host, localOnly)
+    return findSpeculativeTask(hostPort, localOnly)
   }
 
   // Does a host count as a preferred location for a task? This is true if
   // either the task has preferred locations and this host is one, or it has
   // no preferred locations (in which we still count the launch as preferred).
-  def isPreferredLocation(task: Task[_], host: String): Boolean = {
+  def isPreferredLocation(task: Task[_], hostPort: String): Boolean = {
     val locs = task.preferredLocations
-    return (locs.contains(host) || locs.isEmpty)
+    // DEBUG code
+    if (locs.exists(0 != Utils.parseHostPort(_)._2)) {
+      Utils.logErrorWithStack("preferredLocation has port specified ? Unexpected ... " + locs)
+    }
+
+    if (locs.contains(hostPort) || locs.isEmpty) return true
+
+    val host : String = Utils.parseHostPort(hostPort)._1;
+    locs.contains(host)
+  }
+
+  // Does a host count as a rack local preferred location for a task? (assumes host is NOT preferred location).
+  // This is true if either the task has preferred locations and this host is one, or it has
+  // no preferred locations (in which we still count the launch as preferred).
+  def isRackLocalLocation(task: Task[_], hostPort: String): Boolean = {
+
+    val locs = task.preferredLocations
+    // DEBUG code
+    if (locs.exists(0 != Utils.parseHostPort(_)._2)) {
+      Utils.logErrorWithStack("preferredLocation has port specified ? Unexpected ... " + locs)
+    }
+
+    val preferredRacks = new HashSet[String]()
+    for (preferredHost <- locs) {
+      val rack = sched.getRackForHost(preferredHost)
+      if (None != rack) preferredRacks += rack.get
+    }
+
+    if (preferredRacks.isEmpty) return false
+
+    val hostRack = sched.getRackForHost(hostPort)
+
+    return None != hostRack && preferredRacks.contains(hostRack.get)
   }
 
   // Respond to an offer of a single slave from the scheduler by finding a task
-  def slaveOffer(slaveId: String, host: String, availableCpus: Double): Option[TaskDescription] = {
+  def slaveOffer(slaveId: String, hostPort: String, availableCpus: Double): Option[TaskDescription] = {
     if (tasksFinished < numTasks && availableCpus >= CPUS_PER_TASK) {
       val time = System.currentTimeMillis
       val localOnly = (time - lastPreferredLaunchTime < LOCALITY_WAIT)
 
-      findTask(host, localOnly) match {
+      findTask(hostPort, localOnly) match {
         case Some(index) => {
           // Found a task; do some bookkeeping and return a Mesos task for it
           val task = tasks(index)
           val taskId = sched.newTaskId()
           // Figure out whether this should count as a preferred launch
-          val preferred = isPreferredLocation(task, host)
-          val prefStr = if (preferred) "preferred" else "non-preferred"
+          val preferred = isPreferredLocation(task, hostPort)
+          val rackLocal = ! preferred && isRackLocalLocation(task, hostPort)
+          val prefStr = if (preferred) "preferred" else if (rackLocal) "rack-local" else "non-preferred"
           logInfo("Starting task %s:%d as TID %s on slave %s: %s (%s)".format(
-            taskSet.id, index, taskId, slaveId, host, prefStr))
+            taskSet.id, index, taskId, slaveId, hostPort, prefStr))
           // Do various bookkeeping
           copiesRunning(index) += 1
-          val info = new TaskInfo(taskId, index, time, host)
+          val info = new TaskInfo(taskId, index, time, hostPort)
           taskInfos(taskId) = info
           taskAttempts(index) = info :: taskAttempts(index)
           if (preferred) {
@@ -352,19 +458,19 @@ private[spark] class TaskSetManager(
     sched.taskSetFinished(this)
   }
 
-  def hostLost(hostname: String) {
-    logInfo("Re-queueing tasks for " + hostname + " from TaskSet " + taskSet.id)
+  def hostLost(hostPort: String) {
+    logInfo("Re-queueing tasks for " + hostPort + " from TaskSet " + taskSet.id)
     // If some task has preferred locations only on hostname, put it in the no-prefs list
     // to avoid the wait from delay scheduling
-    for (index <- getPendingTasksForHost(hostname)) {
-      val newLocs = tasks(index).preferredLocations.toSet & sched.hostsAlive
+    for (index <- getPendingTasksForHost(hostPort)) {
+      val newLocs = findPreferredLocations(tasks(index).preferredLocations, sched)
       if (newLocs.isEmpty) {
         pendingTasksWithNoPrefs += index
       }
     }
     // Re-enqueue any tasks that ran on the failed host if this is a shuffle map stage
     if (tasks(0).isInstanceOf[ShuffleMapTask]) {
-      for ((tid, info) <- taskInfos if info.host == hostname) {
+      for ((tid, info) <- taskInfos if info.hostPort == hostPort) {
         val index = taskInfos(tid).index
         if (finished(index)) {
           finished(index) = false
@@ -378,7 +484,7 @@ private[spark] class TaskSetManager(
       }
     }
     // Also re-enqueue any tasks that were running on the node
-    for ((tid, info) <- taskInfos if info.running && info.host == hostname) {
+    for ((tid, info) <- taskInfos if info.running && info.hostPort == hostPort) {
       taskLost(tid, TaskState.KILLED, null)
     }
   }
@@ -413,7 +519,7 @@ private[spark] class TaskSetManager(
           !speculatableTasks.contains(index)) {
           logInfo(
             "Marking task %s:%d (on %s) as speculatable because it ran more than %.0f ms".format(
-              taskSet.id, index, info.host, threshold))
+              taskSet.id, index, info.hostPort, threshold))
           speculatableTasks += index
           foundTasks = true
         }

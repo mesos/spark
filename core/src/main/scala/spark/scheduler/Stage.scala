@@ -58,11 +58,11 @@ private[spark] class Stage(
     }
   }
  
-  def removeOutputsOnHost(host: String) {
+  def removeOutputsOnHost(hostPort: String) {
     var becameUnavailable = false
     for (partition <- 0 until numPartitions) {
       val prevList = outputLocs(partition)
-      val newList = prevList.filterNot(_.address.ip == host)
+      val newList = prevList.filterNot(_.address.hostPort == hostPort)
       outputLocs(partition) = newList
       if (prevList != Nil && newList == Nil) {
         becameUnavailable = true
@@ -70,7 +70,7 @@ private[spark] class Stage(
       }
     }
     if (becameUnavailable) {
-      logInfo("%s is now unavailable on %s (%d/%d, %s)".format(this, host, numAvailableOutputs, numPartitions, isAvailable))
+      logInfo("%s is now unavailable on %s (%d/%d, %s)".format(this, hostPort, numAvailableOutputs, numPartitions, isAvailable))
     }
   }
 

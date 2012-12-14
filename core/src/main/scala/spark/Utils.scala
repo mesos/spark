@@ -8,6 +8,7 @@ import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{Path, FileSystem, FileUtil}
 import scala.collection.mutable.ArrayBuffer
 import scala.io.Source
+import org.apache.hadoop.yarn.api.ApplicationConstants.Environment
 
 /**
  * Various utility methods used by Spark.
@@ -198,6 +199,7 @@ private object Utils extends Logging {
 
   /**
    * Get the local host's IP address in dotted-quad format (e.g. 1.2.3.4).
+   * Note, this is typically not used from within core spark.
    */
   def localIpAddress(): String = InetAddress.getLocalHost.getHostAddress
 
@@ -208,6 +210,11 @@ private object Utils extends Logging {
    * hostname it reports to the master.
    */
   def setCustomHostname(hostname: String) {
+    // DEBUG code
+    // Currently catches only ipv4 pattern, this is just a debugging tool - not rigourous !
+    if (hostname.matches("^[0-9]+(\\.[0-9]+)*$")) {
+      Utils.logErrorWithStack("Unexpected to set hostname to " + hostname + " which matches IP pattern")
+    }
     customHostname = Some(hostname)
   }
 
@@ -216,6 +223,52 @@ private object Utils extends Logging {
    */
   def localHostName(): String = {
     customHostname.getOrElse(InetAddress.getLocalHost.getHostName)
+  }
+
+  // expensive ? cache ?
+  def getAddressHostName(address: String) : String = {
+    InetAddress.getByName(address).getHostName
+  }
+
+
+
+  def localHostPort(): String = {
+    val retval = System.getProperty("spark.hostname", null)
+    if (null == retval) {
+      logErrorWithStack("spark.hostname not set but invoking localHostPort")
+      return localHostName()
+    }
+
+    retval
+  }
+
+  def getUserNameFromEnvironment() : String = {
+    // defaulting to env if -D is not present ...
+    System.getProperty(Environment.USER.name, System.getenv(Environment.USER.name))
+  }
+
+  def logErrorWithStack(msg: String) {
+    try { throw new Exception } catch { case ex: Exception => { logError(msg, ex) } }
+  }
+
+  def parseHostPort(hostPort: String) : (String,  Int) = {
+    val indx: Int = hostPort.lastIndexOf(':')
+    if (-1 == indx) return (hostPort, 0)
+
+    (hostPort.substring(0, indx).trim(), hostPort.substring(indx + 1).trim().toInt)
+  }
+
+  def addIfNoPort(hostPort: String,  port: Int) : String = {
+    // This is potentially broken - when dealing with ipv6 addresses for example, sigh ...
+    val indx: Int = hostPort.lastIndexOf(':')
+    if (-1 != indx) return hostPort
+
+    hostPort + ":" + port
+  }
+
+  // Note that all params which start with SPARK are propagated all the way through, so if in yarn mode, this MUST be set to true.
+  def isYarnMode() : Boolean = {
+    java.lang.Boolean.getBoolean("SPARK_YARN_MODE")
   }
 
   /**

@@ -79,7 +79,9 @@ private[spark] class ShuffleMapTask(
   with Logging {
 
   def this() = this(0, null, null, 0, null)
-  
+
+  val preferredLocs : Seq[String] = if (null == locs) null else locs.map(loc => Utils.parseHostPort(loc)._1).toSet.toSeq
+
   var split = if (rdd == null) {
     null 
   } else { 
@@ -155,7 +157,7 @@ private[spark] class ShuffleMapTask(
     return new MapStatus(blockManager.blockManagerId, compressedSizes)
   }
 
-  override def preferredLocations: Seq[String] = locs
+  override def preferredLocations: Seq[String] = preferredLocs
 
   override def toString = "ShuffleMapTask(%d, %d)".format(stageId, partition)
 }

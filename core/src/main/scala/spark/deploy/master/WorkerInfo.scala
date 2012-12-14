@@ -20,6 +20,10 @@ private[spark] class WorkerInfo(
   def coresFree: Int = cores - coresUsed
   def memoryFree: Int = memory - memoryUsed
 
+  def hostPort : String = {
+    if (port > 0) host + ":" + port else host;
+  }
+
   def addExecutor(exec: ExecutorInfo) {
     executors(exec.fullId) = exec
     coresUsed += exec.cores

@@ -19,6 +19,11 @@ import akka.util.Duration
 import akka.util.duration._
 
 private[spark] case class ConnectionManagerId(host: String, port: Int) {
+  // DEBUG code
+  if (0 != Utils.parseHostPort(host)._2) {
+    Utils.logErrorWithStack("Illegal host specified " + host + ", has port also")
+  }
+
   def toSocketAddress() = new InetSocketAddress(host, port)
 }
 
@@ -194,8 +199,13 @@ private[spark] class ConnectionManager(port: Int) extends Logging {
       val receivingConnection = connection.asInstanceOf[ReceivingConnection]
       val remoteConnectionManagerId = receivingConnection.remoteConnectionManagerId
       logInfo("Removing ReceivingConnection to " + remoteConnectionManagerId)
-      
-      val sendingConnectionManagerId = connectionsById.keys.find(_.host == remoteConnectionManagerId.host).orNull
+
+      // There must be a better way to phrase this in scala !
+      val sendingConnectionManagerId = connectionsById.keys.find(
+        _ match {
+          case k: ConnectionManagerId if k.host == remoteConnectionManagerId.host && k.port == remoteConnectionManagerId.port => true
+          case _ => false
+        } ).orNull
       if (sendingConnectionManagerId == null) {
         logError("Corresponding SendingConnectionManagerId not found")
         return

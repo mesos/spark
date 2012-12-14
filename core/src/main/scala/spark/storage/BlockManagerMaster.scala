@@ -82,7 +82,7 @@ private[spark]
 case class GetPeers(blockManagerId: BlockManagerId, size: Int) extends ToBlockManagerMaster
   
 private[spark]
-case class RemoveHost(host: String) extends ToBlockManagerMaster
+case class RemoveHost(hostPort: String) extends ToBlockManagerMaster
 
 private[spark]
 case object StopBlockManagerMaster extends ToBlockManagerMaster
@@ -171,12 +171,11 @@ private[spark] class BlockManagerMasterActor(val isLocal: Boolean) extends Actor
 
   initLogging()
   
-  def removeHost(host: String) {
-    logInfo("Trying to remove the host: " + host + " from BlockManagerMaster.")
+  def removeHost(hostPort: String) {
+    logInfo("Trying to remove the host: " + hostPort + " from BlockManagerMaster.")
     logInfo("Previous hosts: " + blockManagerInfo.keySet.toSeq)
-    val ip = host.split(":")(0)
-    val port = host.split(":")(1)
-    blockManagerInfo.remove(new BlockManagerId(ip, port.toInt))
+    val (ip, port) = Utils.parseHostPort(hostPort)
+    blockManagerInfo.remove(new BlockManagerId(ip, port))
     logInfo("Current hosts: " + blockManagerInfo.keySet.toSeq)
     sender ! true
   }
@@ -198,8 +197,8 @@ private[spark] class BlockManagerMasterActor(val isLocal: Boolean) extends Actor
       getPeersDeterministic(blockManagerId, size)
       /*getPeers(blockManagerId, size)*/
       
-    case RemoveHost(host) =>
-      removeHost(host)
+    case RemoveHost(hostPort) =>
+      removeHost(hostPort)
       sender ! true
 
     case StopBlockManagerMaster =>
@@ -215,7 +214,7 @@ private[spark] class BlockManagerMasterActor(val isLocal: Boolean) extends Actor
     val startTimeMs = System.currentTimeMillis()
     val tmp = " " + blockManagerId + " "
     logDebug("Got in register 0" + tmp + Utils.getUsedTimeMs(startTimeMs))
-    if (blockManagerId.ip == Utils.localHostName() && !isLocal) {
+    if (blockManagerId.ip == Utils.localHostPort() && !isLocal) {
       logInfo("Got Register Msg from master node, don't register it")
     } else {
       blockManagerInfo += (blockManagerId -> new BlockManagerInfo(
@@ -344,10 +343,10 @@ private[spark] class BlockManagerMaster(actorSystem: ActorSystem, isMaster: Bool
 
   val AKKA_ACTOR_NAME: String = "BlockMasterManager"
   val REQUEST_RETRY_INTERVAL_MS = 100
-  val DEFAULT_MASTER_IP: String = System.getProperty("spark.master.host", "localhost")
+  val DEFAULT_MASTER_HOST: String = System.getProperty("spark.master.host", "localhost")
   val DEFAULT_MASTER_PORT: Int = System.getProperty("spark.master.port", "7077").toInt
   val DEFAULT_MANAGER_IP: String = Utils.localHostName()
-  val DEFAULT_MANAGER_PORT: String = "10902"
+  val DEFAULT_MANAGER_PORT: Int = 10902
 
   val timeout = 10.seconds
   var masterActor: ActorRef = null
@@ -358,7 +357,7 @@ private[spark] class BlockManagerMaster(actorSystem: ActorSystem, isMaster: Bool
     logInfo("Registered BlockManagerMaster Actor")
   } else {
     val url = "akka://spark@%s:%s/user/%s".format(
-      DEFAULT_MASTER_IP, DEFAULT_MASTER_PORT, AKKA_ACTOR_NAME)
+      DEFAULT_MASTER_HOST, DEFAULT_MASTER_PORT, AKKA_ACTOR_NAME)
     logInfo("Connecting to BlockManagerMaster: " + url)
     masterActor = actorSystem.actorFor(url)
   }
@@ -390,9 +389,9 @@ private[spark] class BlockManagerMaster(actorSystem: ActorSystem, isMaster: Bool
     }
   }
   
-  def notifyADeadHost(host: String) {
-    communicate(RemoveHost(host + ":" + DEFAULT_MANAGER_PORT))
-    logInfo("Removed " + host + " successfully in notifyADeadHost")
+  def notifyADeadHost(hostPort: String) {
+    communicate(RemoveHost(Utils.addIfNoPort(hostPort, DEFAULT_MANAGER_PORT)))
+    logInfo("Removed " + hostPort + " successfully in notifyADeadHost")
   }
 
   def mustRegisterBlockManager(msg: RegisterBlockManager) {

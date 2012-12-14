@@ -33,13 +33,13 @@ private[spark] class ClusterScheduler(val sc: SparkContext)
   // Incrementing Mesos task IDs
   val nextTaskId = new AtomicLong(0)
 
-  // Which hosts in the cluster are alive (contains hostnames)
-  val hostsAlive = new HashSet[String]
+  // Which hosts in the cluster are alive (contains hostPort's)
+  val hostPortsAlive = new HashSet[String]
 
   // Which slave IDs we have executors on
   val slaveIdsWithExecutors = new HashSet[String]
 
-  val slaveIdToHost = new HashMap[String, String]
+  val slaveIdToHostPort = new HashMap[String, String]
 
   // JAR server, if any JARs were added by the user to the SparkContext
   var jarServer: HttpServer = null
@@ -117,8 +117,9 @@ private[spark] class ClusterScheduler(val sc: SparkContext)
       SparkEnv.set(sc.env)
       // Mark each slave as alive and remember its hostname
       for (o <- offers) {
-        slaveIdToHost(o.slaveId) = o.hostname
-        hostsAlive += o.hostname
+        slaveIdToHostPort(o.slaveId) = o.hostPort
+        hostPortsAlive += o.hostPort
+        slaveGained(o.slaveId, o.hostPort)
       }
       // Build a list of tasks to assign to each slave
       val tasks = offers.map(o => new ArrayBuffer[TaskDescription](o.cores))
@@ -129,8 +130,8 @@ private[spark] class ClusterScheduler(val sc: SparkContext)
           launchedTask = false
           for (i <- 0 until offers.size) {
             val sid = offers(i).slaveId
-            val host = offers(i).hostname
-            manager.slaveOffer(sid, host, availableCpus(i)) match {
+            val hostPort = offers(i).hostPort
+            manager.slaveOffer(sid, hostPort, availableCpus(i)) match {
               case Some(task) =>
                 tasks(i) += task
                 val tid = task.taskId
@@ -152,19 +153,19 @@ private[spark] class ClusterScheduler(val sc: SparkContext)
 
   def statusUpdate(tid: Long, state: TaskState, serializedData: ByteBuffer) {
     var taskSetToUpdate: Option[TaskSetManager] = None
-    var failedHost: Option[String] = None
+    var failedHostPort: Option[String] = None
     var taskFailed = false
     synchronized {
       try {
         if (state == TaskState.LOST && taskIdToSlaveId.contains(tid)) {
           // We lost the executor on this slave, so remember that it's gone
           val slaveId = taskIdToSlaveId(tid)
-          val host = slaveIdToHost(slaveId)
-          if (hostsAlive.contains(host)) {
+          val hostPort = slaveIdToHostPort(slaveId)
+          if (hostPortsAlive.contains(hostPort)) {
             slaveIdsWithExecutors -= slaveId
-            hostsAlive -= host
-            activeTaskSetsQueue.foreach(_.hostLost(host))
-            failedHost = Some(host)
+            hostPortsAlive -= hostPort
+            activeTaskSetsQueue.foreach(_.hostLost(hostPort))
+            failedHostPort = Some(hostPort)
           }
         }
         taskIdToTaskSetId.get(tid) match {
@@ -194,8 +195,8 @@ private[spark] class ClusterScheduler(val sc: SparkContext)
     if (taskSetToUpdate != None) {
       taskSetToUpdate.get.statusUpdate(tid, state, serializedData)
     }
-    if (failedHost != None) {
-      listener.hostLost(failedHost.get)
+    if (failedHostPort != None) {
+      listener.hostLost(failedHostPort.get)
       backend.reviveOffers()
     }
     if (taskFailed) {
@@ -232,10 +233,14 @@ private[spark] class ClusterScheduler(val sc: SparkContext)
     if (jarServer != null) {
       jarServer.stop()
     }
+
+    // sleeping for an arbitrary 5 seconds : to ensure that messages are sent out.
+    // TODO: Do something better !
+    Thread.sleep(5000L);
   }
 
   override def defaultParallelism() = backend.defaultParallelism()
-  
+
   // Check for speculatable tasks in all our active jobs.
   def checkSpeculatableTasks() {
     var shouldRevive = false
@@ -250,19 +255,27 @@ private[spark] class ClusterScheduler(val sc: SparkContext)
   }
 
   def slaveLost(slaveId: String) {
-    var failedHost: Option[String] = None
+    var failedHostPort: Option[String] = None
     synchronized {
-      val host = slaveIdToHost(slaveId)
-      if (hostsAlive.contains(host)) {
+      val hostPort = slaveIdToHostPort(slaveId)
+      if (hostPortsAlive.contains(hostPort)) {
         slaveIdsWithExecutors -= slaveId
-        hostsAlive -= host
-        activeTaskSetsQueue.foreach(_.hostLost(host))
-        failedHost = Some(host)
+        hostPortsAlive -= hostPort
+        activeTaskSetsQueue.foreach(_.hostLost(hostPort))
+        failedHostPort = Some(hostPort)
       }
     }
-    if (failedHost != None) {
-      listener.hostLost(failedHost.get)
+    if (failedHostPort != None) {
+      listener.hostLost(failedHostPort.get)
       backend.reviveOffers()
     }
   }
+
+  def slaveGained(slaveId: String, hostPort: String) {
+    listener.hostGained(hostPort)
+  }
+
+
+  // By default, rack is unknown
+  def getRackForHost(value: String) : Option[String] = None
 }

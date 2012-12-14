@@ -13,12 +13,14 @@ private[spark] class ResultTask[T, U](
   
   val split = rdd.splits(partition)
 
+  val preferredLocs : Seq[String] = if (null == locs) null else locs.map(loc => Utils.parseHostPort(loc)._1).toSet.toSeq
+
   override def run(attemptId: Long): U = {
     val context = new TaskContext(stageId, partition, attemptId)
     func(context, rdd.iterator(split))
   }
 
-  override def preferredLocations: Seq[String] = locs
+  override def preferredLocations: Seq[String] = preferredLocs
 
   override def toString = "ResultTask(" + stageId + ", " + partition + ")"
 }

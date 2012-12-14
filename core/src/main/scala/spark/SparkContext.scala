@@ -43,9 +43,8 @@ import spark.scheduler.ShuffleMapTask
 import spark.scheduler.DAGScheduler
 import spark.scheduler.TaskScheduler
 import spark.scheduler.local.LocalScheduler
-import spark.scheduler.cluster.{StandaloneSchedulerBackend, SparkDeploySchedulerBackend, SchedulerBackend, ClusterScheduler}
+import spark.scheduler.cluster.{StandaloneSchedulerBackend, SparkDeploySchedulerBackend, SchedulerBackend, ClusterScheduler, YarnClusterScheduler}
 import spark.scheduler.mesos.{CoarseMesosSchedulerBackend, MesosSchedulerBackend}
-import spark.storage.BlockManagerMaster
 
 /**
  * Main entry point for Spark functionality. A SparkContext represents the connection to a Spark
@@ -63,8 +62,14 @@ class SparkContext(
     jobName: String,
     val sparkHome: String,
     jars: Seq[String],
-    environment: Map[String, String])
+    environment: Map[String, String],
+    // This is used only by yarn for now, but should be relevant to other cluster types (mesos, etc) too.
+    val preferredNodeLocationData: scala.collection.Map[String, scala.collection.Set[SplitInfo]])
   extends Logging {
+
+
+  def this(master: String, jobName: String, sparkHome: String, jars: Seq[String], environment: Map[String, String]) =
+    this(master, jobName, sparkHome, jars, environment, scala.collection.immutable.Map())
 
   /**
    * @param master Cluster URL to connect to (e.g. mesos://host:port, spark://host:port, local[4]).
@@ -87,7 +92,9 @@ class SparkContext(
 
   // Set Spark master host and port system properties
   if (System.getProperty("spark.master.host") == null) {
-    System.setProperty("spark.master.host", Utils.localIpAddress())
+    // For YARN, set to hostname - this is only place where the code overlaps between various modes.
+    if (Utils.isYarnMode()) System.setProperty("spark.master.host", Utils.localHostName())
+    else System.setProperty("spark.master.host", Utils.localIpAddress())
   }
   if (System.getProperty("spark.master.port") == null) {
     System.setProperty("spark.master.port", "0")
@@ -108,7 +115,7 @@ class SparkContext(
   private[spark] val addedJars = HashMap[String, Long]()
 
   // Add each JAR given through the constructor
-  jars.foreach { addJar(_) }
+  if (null != jars) jars.foreach { addJar(_) }
 
   // Environment variables to pass to our executors
   private[spark] val executorEnvs = HashMap[String, String]()
@@ -119,7 +126,7 @@ class SparkContext(
       executorEnvs(key) = value
     }
   }
-  executorEnvs ++= environment
+  if (null != environment) executorEnvs ++= environment
 
   // Create and start the scheduler
   private var taskScheduler: TaskScheduler = {
@@ -171,7 +178,7 @@ class SparkContext(
         scheduler
 
       case "yarn-standalone" =>
-        val scheduler = new ClusterScheduler(this)
+        val scheduler = new YarnClusterScheduler(this)
         val backend = new StandaloneSchedulerBackend(scheduler, this.env.actorSystem)
         scheduler.initialize(backend)
         scheduler
@@ -478,6 +485,15 @@ class SparkContext(
     SparkEnv.set(null)
     ShuffleMapTask.clearCache()
     logInfo("Successfully stopped SparkContext")
+  }
+
+
+  // worst case ... should not really have to do this, but the helps yarn to evict resources earlier.
+  override def finalize() {
+    // do if not stopped already - using dagScheduler as proxy to identify that.
+    if (null != dagScheduler){
+      stop()
+    }
   }
 
   /**

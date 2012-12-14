@@ -37,7 +37,7 @@ private[spark] class MapOutputTrackerActor(tracker: MapOutputTracker) extends Ac
 }
 
 private[spark] class MapOutputTracker(actorSystem: ActorSystem, isMaster: Boolean) extends Logging {
-  val ip: String = System.getProperty("spark.master.host", "localhost")
+  val host: String = System.getProperty("spark.master.host", "localhost")
   val port: Int = System.getProperty("spark.master.port", "7077").toInt
   val actorName: String = "MapOutputTracker"
 
@@ -59,7 +59,7 @@ private[spark] class MapOutputTracker(actorSystem: ActorSystem, isMaster: Boolea
     logInfo("Registered MapOutputTrackerActor actor")
     actor
   } else {
-    val url = "akka://spark@%s:%s/user/%s".format(ip, port, actorName)
+    val url = "akka://spark@%s:%s/user/%s".format(host, port, actorName)
     actorSystem.actorFor(url)
   }
 
@@ -146,8 +146,8 @@ private[spark] class MapOutputTracker(actorSystem: ActorSystem, isMaster: Boolea
       }
       // We won the race to fetch the output locs; do so
       logInfo("Doing the fetch; tracker actor = " + trackerActor)
-      val host = System.getProperty("spark.hostname", Utils.localHostName)
-      val fetchedBytes = askTracker(GetMapOutputStatuses(shuffleId, host)).asInstanceOf[Array[Byte]]
+      val hostPort = Utils.localHostPort()
+      val fetchedBytes = askTracker(GetMapOutputStatuses(shuffleId, hostPort)).asInstanceOf[Array[Byte]]
       val fetchedStatuses = deserializeStatuses(fetchedBytes)
       
       logInfo("Got the output locations")

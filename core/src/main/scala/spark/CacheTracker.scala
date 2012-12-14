@@ -17,13 +17,13 @@ import spark.storage.StorageLevel
 
 private[spark] sealed trait CacheTrackerMessage
 
-private[spark] case class AddedToCache(rddId: Int, partition: Int, host: String, size: Long = 0L)
+private[spark] case class AddedToCache(rddId: Int, partition: Int, hostPort: String, size: Long = 0L)
   extends CacheTrackerMessage
-private[spark] case class DroppedFromCache(rddId: Int, partition: Int, host: String, size: Long = 0L)
+private[spark] case class DroppedFromCache(rddId: Int, partition: Int, hostPort: String, size: Long = 0L)
   extends CacheTrackerMessage
-private[spark] case class MemoryCacheLost(host: String) extends CacheTrackerMessage
+private[spark] case class MemoryCacheLost(hostPort: String) extends CacheTrackerMessage
 private[spark] case class RegisterRDD(rddId: Int, numPartitions: Int) extends CacheTrackerMessage
-private[spark] case class SlaveCacheStarted(host: String, size: Long) extends CacheTrackerMessage
+private[spark] case class SlaveCacheStarted(hostPort: String, size: Long) extends CacheTrackerMessage
 private[spark] case object GetCacheStatus extends CacheTrackerMessage
 private[spark] case object GetCacheLocations extends CacheTrackerMessage
 private[spark] case object StopCacheTracker extends CacheTrackerMessage
@@ -33,19 +33,19 @@ private[spark] class CacheTrackerActor extends Actor with Logging {
   private val locs = new HashMap[Int, Array[List[String]]]
 
   /**
-   * A map from the slave's host name to its cache size.
+   * A map from the slave's hostPort to its cache size.
    */
   private val slaveCapacity = new HashMap[String, Long]
   private val slaveUsage = new HashMap[String, Long]
 
-  private def getCacheUsage(host: String): Long = slaveUsage.getOrElse(host, 0L)
-  private def getCacheCapacity(host: String): Long = slaveCapacity.getOrElse(host, 0L)
-  private def getCacheAvailable(host: String): Long = getCacheCapacity(host) - getCacheUsage(host)
+  private def getCacheUsage(hostPort: String): Long = slaveUsage.getOrElse(hostPort, 0L)
+  private def getCacheCapacity(hostPort: String): Long = slaveCapacity.getOrElse(hostPort, 0L)
+  private def getCacheAvailable(hostPort: String): Long = getCacheCapacity(hostPort) - getCacheUsage(hostPort)
   
   def receive = {
-    case SlaveCacheStarted(host: String, size: Long) =>
-      slaveCapacity.put(host, size)
-      slaveUsage.put(host, 0)
+    case SlaveCacheStarted(hostPort: String, size: Long) =>
+      slaveCapacity.put(hostPort, size)
+      slaveUsage.put(hostPort, 0)
       sender ! true
 
     case RegisterRDD(rddId: Int, numPartitions: Int) =>
@@ -53,22 +53,22 @@ private[spark] class CacheTrackerActor extends Actor with Logging {
       locs(rddId) = Array.fill[List[String]](numPartitions)(Nil)
       sender ! true
 
-    case AddedToCache(rddId, partition, host, size) =>
-      slaveUsage.put(host, getCacheUsage(host) + size)
-      locs(rddId)(partition) = host :: locs(rddId)(partition)
+    case AddedToCache(rddId, partition, hostPort, size) =>
+      slaveUsage.put(hostPort, getCacheUsage(hostPort) + size)
+      locs(rddId)(partition) = hostPort :: locs(rddId)(partition)
       sender ! true
 
-    case DroppedFromCache(rddId, partition, host, size) =>
-      slaveUsage.put(host, getCacheUsage(host) - size)
+    case DroppedFromCache(rddId, partition, hostPort, size) =>
+      slaveUsage.put(hostPort, getCacheUsage(hostPort) - size)
       // Do a sanity check to make sure usage is greater than 0.
-      locs(rddId)(partition) = locs(rddId)(partition).filterNot(_ == host)
+      locs(rddId)(partition) = locs(rddId)(partition).filterNot(_ == hostPort)
       sender ! true
 
-    case MemoryCacheLost(host) =>
-      logInfo("Memory cache lost on " + host)
+    case MemoryCacheLost(hostPort) =>
+      logInfo("Memory cache lost on " + hostPort)
       for ((id, locations) <- locs) {
         for (i <- 0 until locations.length) {
-          locations(i) = locations(i).filterNot(_ == host)
+          locations(i) = locations(i).filterNot(_ == hostPort)
         }
       }
       sender ! true
@@ -78,8 +78,8 @@ private[spark] class CacheTrackerActor extends Actor with Logging {
       sender ! locs.map{case (rrdId, array) => (rrdId -> array.clone())}
 
     case GetCacheStatus =>
-      val status = slaveCapacity.map { case (host, capacity) =>
-        (host, capacity, getCacheUsage(host))
+      val status = slaveCapacity.map { case (hostPort, capacity) =>
+        (hostPort, capacity, getCacheUsage(hostPort))
       }.toSeq
       sender ! status
 
@@ -94,7 +94,7 @@ private[spark] class CacheTracker(actorSystem: ActorSystem, isMaster: Boolean, b
   extends Logging {
  
   // Tracker actor on the master, or remote reference to it on workers
-  val ip: String = System.getProperty("spark.master.host", "localhost")
+  val host: String = System.getProperty("spark.master.host", "localhost")
   val port: Int = System.getProperty("spark.master.port", "7077").toInt
   val actorName: String = "CacheTracker"
 
@@ -105,7 +105,7 @@ private[spark] class CacheTracker(actorSystem: ActorSystem, isMaster: Boolean, b
     logInfo("Registered CacheTrackerActor actor")
     actor
   } else {
-    val url = "akka://spark@%s:%s/user/%s".format(ip, port, actorName)
+    val url = "akka://spark@%s:%s/user/%s".format(host, port, actorName)
     actorSystem.actorFor(url)
   }
 
@@ -145,13 +145,13 @@ private[spark] class CacheTracker(actorSystem: ActorSystem, isMaster: Boolean, b
   }
   
   // For BlockManager.scala only
-  def cacheLost(host: String) {
-    communicate(MemoryCacheLost(host))
-    logInfo("CacheTracker successfully removed entries on " + host)
+  def cacheLost(hostPort: String) {
+    communicate(MemoryCacheLost(hostPort))
+    logInfo("CacheTracker successfully removed entries on " + hostPort)
   }
 
   // Get the usage status of slave caches. Each tuple in the returned sequence
-  // is in the form of (host name, capacity, usage).
+  // is in the form of (hostPort, capacity, usage).
   def getCacheStatus(): Seq[(String, Long, Long)] = {
     askTracker(GetCacheStatus).asInstanceOf[Seq[(String, Long, Long)]]
   }
@@ -203,7 +203,7 @@ private[spark] class CacheTracker(actorSystem: ActorSystem, isMaster: Boolean, b
         }
         // If we got here, we have to load the split
         // Tell the master that we're doing so
-        //val host = System.getProperty("spark.hostname", Utils.localHostName)
+        //val host = Utils.localHostPort()
         //val future = trackerActor !! AddedToCache(rdd.id, split.index, host)
         // TODO: fetch any remote copy of the split that may be available
         // TODO: also register a listener for when it unloads
@@ -226,7 +226,7 @@ private[spark] class CacheTracker(actorSystem: ActorSystem, isMaster: Boolean, b
 
   // Called by the Cache to report that an entry has been dropped from it
   def dropEntry(rddId: Int, partition: Int) {
-    communicate(DroppedFromCache(rddId, partition, Utils.localHostName()))
+    communicate(DroppedFromCache(rddId, partition, Utils.localHostPort()))
   }
 
   def stop() {
