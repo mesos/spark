@@ -37,7 +37,7 @@ class DAGScheduler(taskSched: TaskScheduler) extends TaskSchedulerListener with 
     eventQueue.put(HostLost(hostPort))
   }
 
-  // Called by TaskScheduler when a host fails.
+  // Called by TaskScheduler when a host is added
   override def hostGained(hostPort: String) {
     eventQueue.put(HostGained(hostPort))
   }
