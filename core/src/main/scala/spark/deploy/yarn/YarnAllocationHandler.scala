@@ -412,9 +412,8 @@ private[yarn] class YarnAllocationHandler(val conf: Configuration, val resourceM
       logDebug("Empty allocation req ..  release : " + releasedContainerList)
     }
 
-    // debug
     for (req : ResourceRequest <- resourceRequests) {
-      logDebug("rsrcRequest ... host : " + req.getHostName + ", numContainers : " + req.getNumContainers +
+      logInfo("rsrcRequest ... host : " + req.getHostName + ", numContainers : " + req.getNumContainers +
         ", p = " + req.getPriority().getPriority + ", capability: "  + req.getCapability)
     }
     resourceManager.allocate(req)
