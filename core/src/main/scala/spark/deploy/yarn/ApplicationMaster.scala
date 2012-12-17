@@ -258,11 +258,11 @@ class ApplicationMaster(args: ApplicationMasterArguments, conf : Configuration) 
 
 object ApplicationMaster {
   // number of times to wait for the allocator loop to complete.
-  // each loop iteration waits for 100ms, so maximum of 10 seconds.
+  // each loop iteration waits for 100ms, so maximum of 3 seconds.
   // This is to ensure that we have reasonable number of containers before we start
   // TODO: Currently, task to container is computed once (TaskSetManager) - which need not be optimal as more 
   // containers are available. Might need to handle this better.
-  private val ALLOCATOR_LOOP_WAIT_COUNT = 100
+  private val ALLOCATOR_LOOP_WAIT_COUNT = 30
   def incrementAllocatorLoop(by : Int) {
     val count = yarnAllocatorLoop.getAndAdd(by)
     if (count >= ALLOCATOR_LOOP_WAIT_COUNT){
@@ -282,7 +282,7 @@ object ApplicationMaster {
   val sparkContextRef: AtomicReference[SparkContext] = new AtomicReference[SparkContext](null)
   val yarnAllocatorLoop: AtomicInteger = new AtomicInteger(0)
 
-  def sparkContextInitialized(sc: SparkContext) {
+  def sparkContextInitialized(sc: SparkContext) : Boolean = {
     var modified : Boolean = false;
     sparkContextRef.synchronized {
       modified = sparkContextRef.compareAndSet(null, sc)
@@ -311,10 +311,7 @@ object ApplicationMaster {
         yarnAllocatorLoop.wait(1000L)
       }
     }
-    if (modified){
-      // Wait for a few seconds for the slaves to bootstrap and register with master - best case attempt
-      Thread.sleep(3000L)
-    }
+    modified
   }
 
   def main(argStrings: Array[String]) {
