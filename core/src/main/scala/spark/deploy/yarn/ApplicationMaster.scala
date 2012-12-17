@@ -1,6 +1,7 @@
 package spark.deploy.yarn
 
 import java.net.Socket
+import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.{AtomicInteger, AtomicReference}
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.net.NetUtils
@@ -50,6 +51,7 @@ class ApplicationMaster(args: ApplicationMasterArguments, conf : Configuration) 
     resourceManager = registerWithResourceManager()
     registerApplicationMaster()
     
+    ApplicationMaster.register(this)
     // Start the user's JAR
     userThread = startUserClass()
     
@@ -151,7 +153,6 @@ class ApplicationMaster(args: ApplicationMasterArguments, conf : Configuration) 
   private def allocateWorkers() {
     logInfo("Waiting for spark context initialization")
 
-    // required elsewhere ?
     try {
       var sparkContext : SparkContext = null
       ApplicationMaster.sparkContextRef.synchronized {
@@ -180,7 +181,8 @@ class ApplicationMaster(args: ApplicationMasterArguments, conf : Configuration) 
           Thread.sleep(100)
       }
     } finally {
-      // in case of exceptions, etc - ensure that count is atleast ALLOCATOR_LOOP_WAIT_COUNT : so that the loop breaks
+      // in case of exceptions, etc - ensure that count is atleast ALLOCATOR_LOOP_WAIT_COUNT : 
+      // so that the loop (in ApplicationMaster.sparkContextInitialized) breaks
       ApplicationMaster.incrementAllocatorLoop(ApplicationMaster.ALLOCATOR_LOOP_WAIT_COUNT)
     }
     logInfo("All workers have launched.")
@@ -243,7 +245,7 @@ class ApplicationMaster(args: ApplicationMasterArguments, conf : Configuration) 
   }
   */
   
-  private def finishApplicationMaster() { 
+  def finishApplicationMaster() { 
     val finishReq = Records.newRecord(classOf[FinishApplicationMasterRequest])
       .asInstanceOf[FinishApplicationMasterRequest]
     finishReq.setAppAttemptId(appAttemptId)
@@ -256,7 +258,11 @@ class ApplicationMaster(args: ApplicationMasterArguments, conf : Configuration) 
 
 object ApplicationMaster {
   // number of times to wait for the allocator loop to complete.
-  private val ALLOCATOR_LOOP_WAIT_COUNT = 4
+  // each loop iteration waits for 100ms, so maximum of 10 seconds.
+  // This is to ensure that we have reasonable number of containers before we start
+  // TODO: Currently, task to container is computed once (TaskSetManager) - which need not be optimal as more 
+  // containers are available. Might need to handle this better.
+  private val ALLOCATOR_LOOP_WAIT_COUNT = 100
   def incrementAllocatorLoop(by : Int) {
     val count = yarnAllocatorLoop.getAndAdd(by)
     if (count >= ALLOCATOR_LOOP_WAIT_COUNT){
@@ -265,6 +271,12 @@ object ApplicationMaster {
         yarnAllocatorLoop.notifyAll()
       }
     }
+  }
+
+  private val applicationMasters : CopyOnWriteArrayList[ApplicationMaster] = new CopyOnWriteArrayList[ApplicationMaster]()
+
+  def register(master : ApplicationMaster) {
+    applicationMasters.add(master)
   }
 
   val sparkContextRef: AtomicReference[SparkContext] = new AtomicReference[SparkContext](null)
@@ -277,7 +289,7 @@ object ApplicationMaster {
       sparkContextRef.notifyAll()
     }
 
-    // Add a shutdown hook - as a best case effort in case users do not call sc.stop
+    // Add a shutdown hook - as a best case effort in case users do not call sc.stop or do System.exit
     // Should not really have to do this, but it helps yarn to evict resources earlier.
     // not to mention, prevent Client declaring failure even though we exit'ed properly.
     if (modified) {
@@ -285,8 +297,10 @@ object ApplicationMaster {
         // This is not just to log, but also to ensure that log system is initialized for this instance when we actually are 'run'
         logInfo("Adding shutdown hook for context " + sc)
         override def run() { 
-          logInfo("Invoking sc.stop from shutdown hook"); 
+          logInfo("Invoking sc stop from shutdown hook"); 
           sc.stop() 
+          // best case ...
+          for (val master : ApplicationMaster <- applicationMasters) master.finishApplicationMaster
         } 
       } )
     }
