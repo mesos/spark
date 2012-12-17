@@ -311,6 +311,10 @@ object ApplicationMaster {
         yarnAllocatorLoop.wait(1000L)
       }
     }
+    if (modified){
+      // Wait for a few seconds for the slaves to bootstrap and register with master - best case attempt
+      Thread.sleep(3000L)
+    }
   }
 
   def main(argStrings: Array[String]) {
