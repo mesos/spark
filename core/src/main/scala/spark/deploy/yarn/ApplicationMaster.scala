@@ -271,9 +271,24 @@ object ApplicationMaster {
   val yarnAllocatorLoop: AtomicInteger = new AtomicInteger(0)
 
   def sparkContextInitialized(sc: SparkContext) {
+    var modified : Boolean = false;
     sparkContextRef.synchronized {
-      sparkContextRef.compareAndSet(null, sc)
+      modified = sparkContextRef.compareAndSet(null, sc)
       sparkContextRef.notifyAll()
+    }
+
+    // Add a shutdown hook - as a best case effort in case users do not call sc.stop
+    // Should not really have to do this, but it helps yarn to evict resources earlier.
+    // not to mention, prevent Client declaring failure even though we exit'ed properly.
+    if (modified) {
+      Runtime.getRuntime().addShutdownHook(new Thread with Logging { 
+        // This is not just to log, but also to ensure that log system is initialized for this instance when we actually are 'run'
+        logInfo("Adding shutdown hook for context " + sc)
+        override def run() { 
+          logInfo("Invoking sc.stop from shutdown hook"); 
+          sc.stop() 
+        } 
+      } )
     }
 
     // Wait for initialization to complete and atleast 'some' nodes can get allocated

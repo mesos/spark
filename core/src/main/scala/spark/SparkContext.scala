@@ -489,14 +489,6 @@ class SparkContext(
   }
 
 
-  // worst case ... should not really have to do this, but the helps yarn to evict resources earlier.
-  override def finalize() {
-    // do if not stopped already - using dagScheduler as proxy to identify that.
-    if (null != dagScheduler){
-      stop()
-    }
-  }
-
   /**
    * Get Spark's home location from either a value set through the constructor,
    * or the spark.home Java property, or the SPARK_HOME environment variable
