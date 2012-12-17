@@ -60,13 +60,14 @@ class Client(conf: Configuration, args: ClientArguments) extends Logging {
     val clusterMetrics: YarnClusterMetrics = getYarnClusterMetrics
     logInfo("Got Cluster metric info from ASM, numNodeManagers=" + clusterMetrics.getNumNodeManagers)
 
+/*
     val clusterNodeReports: List[NodeReport] = getNodeReports
     logDebug("Got Cluster node info from ASM")
-    import scala.collection.JavaConversions._
     for (node : NodeReport <- clusterNodeReports) {
       logDebug("Got node report from ASM for, nodeId=" + node.getNodeId + ", nodeAddress=" + node.getHttpAddress +
         ", nodeRackName=" + node.getRackName + ", nodeNumContainers=" + node.getNumContainers + ", nodeHealthStatus=" + node.getNodeHealthStatus)
     }
+*/
 
     val queueInfo: QueueInfo = getQueueInfo(args.amQueue)
     logInfo("Queue info .. queueName=" + queueInfo.getQueueName + ", queueCurrentCapacity=" + queueInfo.getCurrentCapacity +
@@ -269,8 +270,7 @@ class Client(conf: Configuration, args: ClientArguments) extends Logging {
 object Client {
   def main(argStrings: Array[String]) {
     val args = new ClientArguments(argStrings)
-    // Set a spark param indicating we are running in YARN mode
-    System.setProperty("SPARK_YARN_MODE", "true")
+    Utils.setYarnMode()
     new Client(args).run
   }
 

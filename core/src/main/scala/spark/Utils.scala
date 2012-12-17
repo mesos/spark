@@ -276,6 +276,12 @@ private object Utils extends Logging {
     java.lang.Boolean.getBoolean("SPARK_YARN_MODE")
   }
 
+  // Set an env variable indicating we are running in YARN mode.
+  // Note that anything with SPARK prefix gets propagated to all (remote) processes
+  def setYarnMode() {
+    System.setProperty("SPARK_YARN_MODE", "true")
+  }
+
   /**
    * Returns a standard ThreadFactory except all threads are daemons.
    */

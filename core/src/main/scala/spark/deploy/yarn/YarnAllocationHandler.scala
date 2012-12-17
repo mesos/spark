@@ -32,7 +32,7 @@ private[yarn] class YarnAllocationHandler(val conf: Configuration, val resourceM
   extends Logging {
 
 
-  // Both of these are locked on allocatedHostToContainersMap. Complementary data structures
+  // These three are locked on allocatedHostToContainersMap. Complementary data structures
   // allocatedHostToContainersMap : containers which are running : host, Set<containerid>
   // allocatedContainerToHostMap: container to host mapping
   private val allocatedHostToContainersMap : HashMap[String, collection.mutable.Set[ContainerId]] = 
@@ -45,11 +45,12 @@ private[yarn] class YarnAllocationHandler(val conf: Configuration, val resourceM
   // containers which have been released.
   private val releasedContainerList : CopyOnWriteArrayList[ContainerId] = 
     new CopyOnWriteArrayList[ContainerId]()
-  // value is irrelevant, we just need a Set actually ...
+  // containers to be released in next request to RM
   private val pendingReleaseContainers : ConcurrentHashMap[ContainerId, Boolean] = 
     new ConcurrentHashMap[ContainerId, Boolean]
 
   private val numWorkersRunning = new AtomicInteger()
+  // Used to generate a unique id per worker
   private val workerIdCounter = new AtomicInteger()
   private val lastResponseId = new AtomicInteger()
 
@@ -60,7 +61,7 @@ private[yarn] class YarnAllocationHandler(val conf: Configuration, val resourceM
     container.getResource.getMemory >= workerMemory
   }
 
-  // Typically, yarn returns more containers than we would have requested under ANY, this method 
+  // yarn can returns more containers than we would have requested under ANY, this method 
   // prioritizes how to use the allocated containers.
   // flatten the map such that the array buffer entries are spread out across the returned value.
   // given <host, container_count> == <h1, 5>, <h2, 3>, <h3, 2>, <h4, 1>, <h5, 1>, the return value 
@@ -70,6 +71,8 @@ private[yarn] class YarnAllocationHandler(val conf: Configuration, val resourceM
   // then dont end up allocating all containers on a small number of hosts - increasing probability of 
   // multiple container failure when a host goes down.
   // Note, there is bias for keys with higher number of entries in value to be picked first (by design)
+  // Also note that we first consume data local, then rack local and finally off rack nodes. So the prioritization
+  // from this method applies to within each category
   def prioritizeContainers(map: HashMap[String, ArrayBuffer[Container]]): List[Container] = {
     val _keyList : ArrayBuffer[String] = new ArrayBuffer[String](map.size)
     _keyList ++= map.keys
@@ -88,6 +91,7 @@ private[yarn] class YarnAllocationHandler(val conf: Configuration, val resourceM
       for (key : String <- keyList) {
         val containerList : ArrayBuffer[Container] = map.get(key).getOrElse(null)
         assert(null != containerList)
+        // Get the index'th entry for this host - if present
         if (index < containerList.size){
           retval += containerList.apply(index)
           found = true
@@ -149,7 +153,7 @@ private[yarn] class YarnAllocationHandler(val conf: Configuration, val resourceM
         assert(null != remainingContainers)
 
         if (requiredHostCount >= remainingContainers.size){
-          // Add all to dataLocalContainers
+          // Since we got <= required containers, add all to dataLocalContainers
           dataLocalContainers.put(candidateHost, remainingContainers)
           // all consumed
           remainingContainers = null
@@ -162,14 +166,14 @@ private[yarn] class YarnAllocationHandler(val conf: Configuration, val resourceM
           dataLocalContainers.put(candidateHost, dataLocal)
           // remainingContainers = remaining
 
-          // yarn has nasty habit of allocating a tonne of containers on a host - discourage this : 
+          // yarn has nasty habit of allocating a tonne of containers on a host - discourage this :
 	  // add remaining to release list. If we have insufficient containers, next allocation cycle 
 	  // will reallocate (but wont treat it as data local)
           for (container : Container <- remaining) releasedContainerList.add(container.getId())
           remainingContainers = null
         }
 
-        // rack local ?
+        // now rack local
         if (null != remainingContainers){
           val rack : String = YarnAllocationHandler.lookupRack(conf, candidateHost)
 
@@ -199,13 +203,14 @@ private[yarn] class YarnAllocationHandler(val conf: Configuration, val resourceM
           }
         }
 
+        // If still not consumed, then it is off rack host - add to that list.
         if (null != remainingContainers){
           offRackContainers.put(candidateHost, remainingContainers)
         }
       }
 
       // Now that we have split the containers into various groups, go through them in order : 
-      // first host local, then rack local and then any.
+      // first host local, then rack local and then off rack (everything else).
       // Note that the list we create below tries to ensure that not all containers end up within a host 
       // if there are sufficiently large number of hosts/containers.
 
@@ -230,7 +235,7 @@ private[yarn] class YarnAllocationHandler(val conf: Configuration, val resourceM
           numWorkersRunning.decrementAndGet()
         }
         else {
-          // deallocate + allocate can result in reusing id's wrongly !
+          // deallocate + allocate can result in reusing id's wrongly - so use a different counter (workerIdCounter)
           val workerId = workerIdCounter.incrementAndGet().toString
           val masterUrl = "akka://spark@%s:%s/user/%s".format(
             System.getProperty("spark.master.host"), System.getProperty("spark.master.port"),

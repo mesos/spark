@@ -57,16 +57,11 @@ private[spark] class TaskSetManager(
   // back at the head of the stack. They are also only cleaned up lazily;
   // when a task is launched, it remains in all the pending lists except
   // the one that it was launched from, but gets removed from them later.
-  val pendingTasksForHostPort = new HashMap[String, ArrayBuffer[Int]]
+  private val pendingTasksForHostPort = new HashMap[String, ArrayBuffer[Int]]
 
-  // List of pending tasks for each node based on rack locality. These collections are actually
-  // treated as stacks, in which new tasks are added to the end of the
-  // ArrayBuffer and removed from the end. This makes it faster to detect
-  // tasks that repeatedly fail because whenever a task failed, it is put
-  // back at the head of the stack. They are also only cleaned up lazily;
-  // when a task is launched, it remains in all the pending lists except
-  // the one that it was launched from, but gets removed from them later.
-  val pendingRackLocalTasksForHostPort = new HashMap[String, ArrayBuffer[Int]]
+  // List of pending tasks for each node based on rack locality.
+  // Essentially, similar to pendingTasksForHostPort, except at rack leve.
+  private val pendingRackLocalTasksForHostPort = new HashMap[String, ArrayBuffer[Int]]
 
   // List containing pending tasks with no locality preferences
   val pendingTasksWithNoPrefs = new ArrayBuffer[Int]

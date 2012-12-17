@@ -28,6 +28,7 @@ export SPARK_MEM
 
 # Set JAVA_OPTS to be able to load native libraries and to set heap size
 JAVA_OPTS="$SPARK_JAVA_OPTS"
+# Change from var+=" more" to var="$var more" - the former does not work on older bash shells
 JAVA_OPTS="$JAVA_OPTS -Djava.library.path=$SPARK_LIBRARY_PATH"
 JAVA_OPTS="$JAVA_OPTS -Xms$SPARK_MEM -Xmx$SPARK_MEM"
 # Load extra JAVA_OPTS from conf/java-opts, if it exists
@@ -78,6 +79,7 @@ else
   CLASSPATH="$CLASSPATH:$SCALA_HOME/lib/scala-compiler.jar"
   CLASSPATH="$CLASSPATH:$SCALA_HOME/lib/jline.jar"
   # We need $SCALA_HOME/lib/ and $SCALA_HOME/lib/jars since some deployments have it inside it ...
+  # Ofcourse, if it does not exist, then no harm done.
   CLASSPATH="$CLASSPATH:$SCALA_HOME/lib/jars/scala-library.jar"
   CLASSPATH="$CLASSPATH:$SCALA_HOME/lib/jars/scala-compiler.jar"
   CLASSPATH="$CLASSPATH:$SCALA_HOME/lib/jars/jline.jar"

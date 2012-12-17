@@ -19,13 +19,13 @@ class ApplicationMaster(args: ApplicationMasterArguments, conf : Configuration) 
 
   def this(args: ApplicationMasterArguments) = this(args, new Configuration())
   
-  var rpc : YarnRPC = YarnRPC.create(conf)
-  var resourceManager : AMRMProtocol = null
-  var appAttemptId : ApplicationAttemptId = null
-  var userThread : Thread = null
-  val yarnConf: YarnConfiguration = new YarnConfiguration(conf)
+  private var rpc : YarnRPC = YarnRPC.create(conf)
+  private var resourceManager : AMRMProtocol = null
+  private var appAttemptId : ApplicationAttemptId = null
+  private var userThread : Thread = null
+  private val yarnConf: YarnConfiguration = new YarnConfiguration(conf)
 
-  var yarnAllocator : YarnAllocationHandler = null
+  private var yarnAllocator : YarnAllocationHandler = null
 
   def run() {
     
@@ -44,7 +44,7 @@ class ApplicationMaster(args: ApplicationMasterArguments, conf : Configuration) 
     })
   }
 
-  def runImpl() {
+  private def runImpl() {
 
     appAttemptId = getApplicationAttemptId()
     resourceManager = registerWithResourceManager()
@@ -69,7 +69,7 @@ class ApplicationMaster(args: ApplicationMasterArguments, conf : Configuration) 
     System.exit(0)
   }
   
-  def getApplicationAttemptId() : ApplicationAttemptId = {
+  private def getApplicationAttemptId() : ApplicationAttemptId = {
     val envs = System.getenv()
     val containerIdString = envs.get(ApplicationConstants.AM_CONTAINER_ID_ENV)
     val containerId = ConverterUtils.toContainerId(containerIdString)
@@ -78,7 +78,7 @@ class ApplicationMaster(args: ApplicationMasterArguments, conf : Configuration) 
     return appAttemptId
   }
   
-  def registerWithResourceManager() : AMRMProtocol = {
+  private def registerWithResourceManager() : AMRMProtocol = {
     val rmAddress = NetUtils.createSocketAddr(yarnConf.get(
       YarnConfiguration.RM_SCHEDULER_ADDRESS,
       YarnConfiguration.DEFAULT_RM_SCHEDULER_ADDRESS))
@@ -86,7 +86,7 @@ class ApplicationMaster(args: ApplicationMasterArguments, conf : Configuration) 
     return rpc.getProxy(classOf[AMRMProtocol], rmAddress, conf).asInstanceOf[AMRMProtocol]
   }
   
-  def registerApplicationMaster() : RegisterApplicationMasterResponse = {
+  private def registerApplicationMaster() : RegisterApplicationMasterResponse = {
     logInfo("Registering the ApplicationMaster")
     val appMasterRequest = Records.newRecord(classOf[RegisterApplicationMasterRequest])
       .asInstanceOf[RegisterApplicationMasterRequest]
@@ -100,7 +100,7 @@ class ApplicationMaster(args: ApplicationMasterArguments, conf : Configuration) 
     return resourceManager.registerApplicationMaster(appMasterRequest)
   }
   
-  def waitForSparkMaster() {
+  private def waitForSparkMaster() {
     logInfo("Waiting for spark master to be reachable.")
     var masterUp = false 
     while(!masterUp) {
@@ -119,7 +119,7 @@ class ApplicationMaster(args: ApplicationMasterArguments, conf : Configuration) 
     }
   }
   
-  def startUserClass() : Thread  = {
+  private def startUserClass() : Thread  = {
     logInfo("Starting the user JAR in a separate Thread")
     val mainMethod = Class.forName(args.userClass, false, Thread.currentThread.getContextClassLoader)
       .getMethod("main", classOf[Array[String]])
@@ -148,7 +148,7 @@ class ApplicationMaster(args: ApplicationMasterArguments, conf : Configuration) 
     return t
   }
 
-  def allocateWorkers() {
+  private def allocateWorkers() {
     logInfo("Waiting for spark context initialization")
 
     // required elsewhere ?
@@ -199,7 +199,7 @@ class ApplicationMaster(args: ApplicationMasterArguments, conf : Configuration) 
   }
 
   // TODO: We might want to extend this to allocate more containers in case they die !
-  def launchReporterThread(_sleepTime: Long) : Thread = {
+  private def launchReporterThread(_sleepTime: Long) : Thread = {
     val sleepTime = if (_sleepTime <= 0 ) 0 else _sleepTime
 
     val t = new Thread {
@@ -222,7 +222,7 @@ class ApplicationMaster(args: ApplicationMasterArguments, conf : Configuration) 
     return t
   }
 
-  def sendProgress() {
+  private def sendProgress() {
     logDebug("Sending progress")
     // simulated with an allocate request with no nodes requested ...
     yarnAllocator.allocateContainers(0);
@@ -243,7 +243,7 @@ class ApplicationMaster(args: ApplicationMasterArguments, conf : Configuration) 
   }
   */
   
-  def finishApplicationMaster() { 
+  private def finishApplicationMaster() { 
     val finishReq = Records.newRecord(classOf[FinishApplicationMasterRequest])
       .asInstanceOf[FinishApplicationMasterRequest]
     finishReq.setAppAttemptId(appAttemptId)

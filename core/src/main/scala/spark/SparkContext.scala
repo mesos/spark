@@ -64,6 +64,7 @@ class SparkContext(
     jars: Seq[String],
     environment: Map[String, String],
     // This is used only by yarn for now, but should be relevant to other cluster types (mesos, etc) too.
+    // This is typically generated from InputFormatInfo.computePreferredLocations .. host, set of data-local splits on host
     val preferredNodeLocationData: scala.collection.Map[String, scala.collection.Set[SplitInfo]])
   extends Logging {
 
