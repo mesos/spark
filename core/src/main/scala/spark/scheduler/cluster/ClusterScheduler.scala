@@ -85,6 +85,9 @@ private[spark] class ClusterScheduler(val sc: SparkContext)
     }
   }
 
+  override def postStartHook() {
+  }
+
   def submitTasks(taskSet: TaskSet) {
     val tasks = taskSet.tasks
     logInfo("Adding task set " + taskSet.id + " with " + tasks.length + " tasks")

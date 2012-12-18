@@ -201,6 +201,8 @@ class SparkContext(
 
   private var dagScheduler = new DAGScheduler(taskScheduler)
 
+  taskScheduler.postStartHook()
+
   // Methods for creating RDDs
 
   /** Distribute a local Scala collection to form an RDD. */

@@ -35,6 +35,8 @@ private[spark] class LocalScheduler(threads: Int, maxFailures: Int, sc: SparkCon
 
   override def start() { }
 
+  override def postStartHook() { }
+
   override def setListener(listener: TaskSchedulerListener) { 
     this.listener = listener
   }
