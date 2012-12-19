@@ -77,9 +77,10 @@ private[spark] object StandaloneExecutorBackend {
     // Debug code
     Utils.checkHost(hostname)
     // set it
-    System.setProperty("spark.hostname", hostname + ":" + boundPort)
+    val sparkHostPort = hostname + ":" + boundPort
+    System.setProperty("spark.hostname", sparkHostPort)
     val actor = actorSystem.actorOf(
-      Props(new StandaloneExecutorBackend(new Executor, masterUrl, slaveId, hostname + ":" + boundPort, cores)),
+      Props(new StandaloneExecutorBackend(new Executor, masterUrl, slaveId, sparkHostPort, cores)),
       name = "Executor")
     actorSystem.awaitTermination()
   }

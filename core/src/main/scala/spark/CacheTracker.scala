@@ -60,6 +60,7 @@ private[spark] class CacheTrackerActor extends Actor with Logging {
       sender ! true
 
     case DroppedFromCache(rddId, partition, hostPort, size) =>
+      Utils.checkHostPort(hostPort)
       slaveUsage.put(hostPort, getCacheUsage(hostPort) - size)
       // Do a sanity check to make sure usage is greater than 0.
       locs(rddId)(partition) = locs(rddId)(partition).filterNot(_ == hostPort)
