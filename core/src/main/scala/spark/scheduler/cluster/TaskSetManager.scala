@@ -50,7 +50,7 @@ private[spark] class TaskSetManager(
   // Last time when we launched a preferred task (for delay scheduling)
   var lastPreferredLaunchTime = System.currentTimeMillis
 
-  // List of pending tasks for each node. These collections are actually
+  // List of pending tasks for each node (hyper local to container). These collections are actually
   // treated as stacks, in which new tasks are added to the end of the
   // ArrayBuffer and removed from the end. This makes it faster to detect
   // tasks that repeatedly fail because whenever a task failed, it is put
@@ -59,9 +59,13 @@ private[spark] class TaskSetManager(
   // the one that it was launched from, but gets removed from them later.
   private val pendingTasksForHostPort = new HashMap[String, ArrayBuffer[Int]]
 
+  // List of pending tasks for each node.
+  // Essentially, similar to pendingTasksForHostPort, except at host level
+  private val pendingTasksForHost = new HashMap[String, ArrayBuffer[Int]]
+
   // List of pending tasks for each node based on rack locality.
-  // Essentially, similar to pendingTasksForHostPort, except at rack leve.
-  private val pendingRackLocalTasksForHostPort = new HashMap[String, ArrayBuffer[Int]]
+  // Essentially, similar to pendingTasksForHost, except at rack level
+  private val pendingRackLocalTasksForHost = new HashMap[String, ArrayBuffer[Int]]
 
   // List containing pending tasks with no locality preferences
   val pendingTasksWithNoPrefs = new ArrayBuffer[Int]
@@ -105,12 +109,12 @@ private[spark] class TaskSetManager(
 
   private def findPreferredLocations(taskPreferredLocations: Seq[String], scheduler: ClusterScheduler) : ArrayBuffer[String] = {
     // DEBUG code
-    if (taskPreferredLocations.exists(0 != Utils.parseHostPort(_)._2)) {
-      Utils.logErrorWithStack("preferredLocation has port specified ? Unexpected ... " + taskPreferredLocations)
-    }
+    taskPreferredLocations.foreach(h => Utils.checkHost(h, "taskPreferredLocation " + taskPreferredLocations))
 
     val retval = new ArrayBuffer[String]
     for (aliveHostPort <- scheduler.hostPortsAlive) {
+      // DEBUG Code
+      Utils.checkHostPort(aliveHostPort)
       if (taskPreferredLocations.contains(Utils.parseHostPort(aliveHostPort)._1)) {
         retval += aliveHostPort
       }
@@ -120,9 +124,7 @@ private[spark] class TaskSetManager(
 
   private def findRackLocalPreferredLocations(taskPreferredLocations: Seq[String], scheduler: ClusterScheduler) : ArrayBuffer[String] = {
     // DEBUG code
-    if (taskPreferredLocations.exists(0 != Utils.parseHostPort(_)._2)) {
-      Utils.logErrorWithStack("preferredLocation has port specified ? Unexpected ... " + taskPreferredLocations)
-    }
+    taskPreferredLocations.foreach(h => Utils.checkHost(h, "taskPreferredLocation " + taskPreferredLocations))
 
     val preferredRacks = new HashSet[String]()
     for (preferredHost <- taskPreferredLocations) {
@@ -152,8 +154,15 @@ private[spark] class TaskSetManager(
       pendingTasksWithNoPrefs += index
     } else {
       for (hostPort <- locations) {
-        val list = pendingTasksForHostPort.getOrElseUpdate(hostPort, ArrayBuffer())
-        list += index
+        // DEBUG Code
+        Utils.checkHostPort(hostPort)
+
+        val hostPortList = pendingTasksForHostPort.getOrElseUpdate(hostPort, ArrayBuffer())
+        hostPortList += index
+
+        val host = Utils.parseHostPort(hostPort)._1
+        val hostList = pendingTasksForHost.getOrElseUpdate(host, ArrayBuffer())
+        hostList += index
       }
     }
 
@@ -161,7 +170,11 @@ private[spark] class TaskSetManager(
     val rackLocalLocations = findRackLocalPreferredLocations(tasks(index).preferredLocations, sched)
     if (! locations.isEmpty && ! rackLocalLocations.isEmpty) {
       for (rackLocalHostPort <- rackLocalLocations) {
-        val list = pendingRackLocalTasksForHostPort.getOrElseUpdate(rackLocalHostPort, ArrayBuffer())
+        // DEBUG Code
+        Utils.checkHostPort(rackLocalHostPort)
+
+        val rackLocalHost = Utils.parseHostPort(rackLocalHostPort)._1
+        val list = pendingRackLocalTasksForHost.getOrElseUpdate(rackLocalHost, ArrayBuffer())
         list += index
       }
     }
@@ -169,17 +182,38 @@ private[spark] class TaskSetManager(
     allPendingTasks += index
   }
 
-  // Return the pending tasks list for a given host, or an empty list if
+  // Return the pending tasks list for a given host port (hyper local), or an empty list if
   // there is no map entry for that host
-  private def getPendingTasksForHost(hostPort: String): ArrayBuffer[Int] = {
+  private def getPendingTasksForHostPort(hostPort: String): ArrayBuffer[Int] = {
+    // DEBUG Code
+    Utils.checkHostPort(hostPort)
     pendingTasksForHostPort.getOrElse(hostPort, ArrayBuffer())
   }
 
   // Return the pending tasks list for a given host, or an empty list if
   // there is no map entry for that host
-  private def getRackLocalPendingTasksForHost(hostPort: String): ArrayBuffer[Int] = {
-    pendingRackLocalTasksForHostPort.getOrElse(hostPort, ArrayBuffer())
+  private def getPendingTasksForHost(hostPort: String): ArrayBuffer[Int] = {
+    val host = Utils.parseHostPort(hostPort)._1
+    pendingTasksForHost.getOrElse(host, ArrayBuffer())
   }
+
+  // Return the pending tasks (rack level) list for a given host, or an empty list if
+  // there is no map entry for that host
+  private def getRackLocalPendingTasksForHost(hostPort: String): ArrayBuffer[Int] = {
+    val host = Utils.parseHostPort(hostPort)._1
+    pendingRackLocalTasksForHost.getOrElse(host, ArrayBuffer())
+  }
+
+  // Number of pending tasks for a given host (which would be data local)
+  def numPendingTasksForHost(hostPort: String): Int = {
+    getPendingTasksForHost(hostPort).count( index => copiesRunning(index) == 0 && !finished(index) )
+  }
+
+  // Number of pending rack local tasks for a given host
+  def numRackLocalPendingTasksForHost(hostPort: String): Int = {
+    getRackLocalPendingTasksForHost(hostPort).count( index => copiesRunning(index) == 0 && !finished(index) )
+  }
+
 
   // Dequeue a pending task from the given list and return its index.
   // Return None if the list is empty.
@@ -230,15 +264,16 @@ private[spark] class TaskSetManager(
     if (localTask != None) {
       return localTask
     }
-    val rackLocalTask = findTaskFromList(getRackLocalPendingTasksForHost(hostPort))
-    if (rackLocalTask != None) {
-      return rackLocalTask
-    }
     val noPrefTask = findTaskFromList(pendingTasksWithNoPrefs)
     if (noPrefTask != None) {
       return noPrefTask
     }
     if (!localOnly) {
+      // Look for rack local only if localOnly == false. Do this before nonLocalTask's though.
+      val rackLocalTask = findTaskFromList(getRackLocalPendingTasksForHost(hostPort))
+      if (rackLocalTask != None) {
+        return rackLocalTask
+      }
       val nonLocalTask = findTaskFromList(allPendingTasks)
       if (nonLocalTask != None) {
         return nonLocalTask
@@ -254,9 +289,7 @@ private[spark] class TaskSetManager(
   def isPreferredLocation(task: Task[_], hostPort: String): Boolean = {
     val locs = task.preferredLocations
     // DEBUG code
-    if (locs.exists(0 != Utils.parseHostPort(_)._2)) {
-      Utils.logErrorWithStack("preferredLocation has port specified ? Unexpected ... " + locs)
-    }
+    locs.foreach(h => Utils.checkHost(h, "preferredLocation " + locs))
 
     if (locs.contains(hostPort) || locs.isEmpty) return true
 
@@ -270,10 +303,9 @@ private[spark] class TaskSetManager(
   def isRackLocalLocation(task: Task[_], hostPort: String): Boolean = {
 
     val locs = task.preferredLocations
+
     // DEBUG code
-    if (locs.exists(0 != Utils.parseHostPort(_)._2)) {
-      Utils.logErrorWithStack("preferredLocation has port specified ? Unexpected ... " + locs)
-    }
+    locs.foreach(h => Utils.checkHost(h, "preferredLocation " + locs))
 
     val preferredRacks = new HashSet[String]()
     for (preferredHost <- locs) {
@@ -457,7 +489,7 @@ private[spark] class TaskSetManager(
     logInfo("Re-queueing tasks for " + hostPort + " from TaskSet " + taskSet.id)
     // If some task has preferred locations only on hostname, put it in the no-prefs list
     // to avoid the wait from delay scheduling
-    for (index <- getPendingTasksForHost(hostPort)) {
+    for (index <- getPendingTasksForHostPort(hostPort)) {
       val newLocs = findPreferredLocations(tasks(index).preferredLocations, sched)
       if (newLocs.isEmpty) {
         pendingTasksWithNoPrefs += index

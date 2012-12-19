@@ -16,6 +16,11 @@ private[spark] class ResultTask[T, U](
   // data locality is on a per host basis, not hyper specific to container (host:port). Unique on set of hosts.
   val preferredLocs : Seq[String] = if (null == locs) null else locs.map(loc => Utils.parseHostPort(loc)._1).toSet.toSeq
 
+  {
+    // DEBUG code
+    preferredLocs.foreach (host => Utils.checkHost(host, "preferredLocs : " + preferredLocs))
+  }
+
   override def run(attemptId: Long): U = {
     val context = new TaskContext(stageId, partition, attemptId)
     func(context, rdd.iterator(split))

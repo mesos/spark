@@ -128,10 +128,49 @@ private[spark] class ClusterScheduler(val sc: SparkContext)
       val tasks = offers.map(o => new ArrayBuffer[TaskDescription](o.cores))
       val availableCpus = offers.map(o => o.cores).toArray
       var launchedTask = false
+
+
       for (manager <- activeTaskSetsQueue.sortBy(m => (m.taskSet.priority, m.taskSet.stageId))) {
+
+        // Split offers based on host local, rack local and off-rack tasks.
+	val hostLocalOffers : HashMap[String, ArrayBuffer[Int]] = new HashMap[String, ArrayBuffer[Int]]()
+	val rackLocalOffers : HashMap[String, ArrayBuffer[Int]] = new HashMap[String, ArrayBuffer[Int]]()
+	val otherOffers : HashMap[String, ArrayBuffer[Int]] = new HashMap[String, ArrayBuffer[Int]]()
+
+        for (i <- 0 until offers.size) {
+          val hostPort = offers(i).hostPort
+          // DEBUG code
+          Utils.checkHostPort(hostPort)
+	  val host = Utils.parseHostPort(hostPort)._1;
+          val numHostLocalTasks =  math.max(0, math.min(manager.numPendingTasksForHost(hostPort), availableCpus(i)))
+	  if (numHostLocalTasks > 0){
+	    val list = hostLocalOffers.getOrElseUpdate(host, new ArrayBuffer[Int])
+	    for (j <- 0 until numHostLocalTasks) list += i
+	  }
+
+          val numRackLocalTasks =  math.max(0, 
+	    math.min(manager.numPendingTasksForHost(hostPort) - numHostLocalTasks, availableCpus(i)))
+	  if (numRackLocalTasks > 0){
+	    val list = rackLocalOffers.getOrElseUpdate(host, new ArrayBuffer[Int])
+	    for (j <- 0 until numRackLocalTasks) list += i
+	  }
+	  if (numHostLocalTasks <= 0 && numRackLocalTasks <= 0){
+	    // add to others list - spread even this across cluster.
+	    val list = otherOffers.getOrElseUpdate(host, new ArrayBuffer[Int])
+	    list += i
+	  }
+        }
+
+	val offersPriorityList : ArrayBuffer[Int] = new ArrayBuffer[Int](
+	  hostLocalOffers.size + rackLocalOffers.size + otherOffers.size)
+	// First host local, then rack, then others
+	offersPriorityList ++= Utils.prioritizeContainers(hostLocalOffers)
+	offersPriorityList ++= Utils.prioritizeContainers(rackLocalOffers)
+	offersPriorityList ++= Utils.prioritizeContainers(otherOffers)
+
         do {
           launchedTask = false
-          for (i <- 0 until offers.size) {
+          for (i <- offersPriorityList) {
             val sid = offers(i).slaveId
             val hostPort = offers(i).hostPort
             manager.slaveOffer(sid, hostPort, availableCpus(i)) match {

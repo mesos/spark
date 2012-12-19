@@ -159,6 +159,7 @@ class Client(conf: Configuration, args: ClientArguments) extends Logging {
     Apps.addToEnvironment(env, Environment.CLASSPATH.name, "$CLASSPATH")
     Apps.addToEnvironment(env, Environment.CLASSPATH.name, "./*")
     Client.populateHadoopClasspath(yarnConf, env)
+    Utils.setYarnMode(env)
     env("SPARK_YARN_JAR_PATH") = 
       localResources("spark.jar").getResource().getScheme.toString() + "://" +
       localResources("spark.jar").getResource().getFile().toString()

@@ -83,6 +83,7 @@ object SparkEnv extends Logging {
         // unexpected
         Utils.logErrorWithStack("Unexpected NOT to have spark.hostname set")
       }
+      Utils.checkHost(hostname)
       System.setProperty("spark.hostname", hostname + ":" + boundPort)
     }
 

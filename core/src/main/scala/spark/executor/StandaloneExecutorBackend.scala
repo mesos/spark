@@ -7,6 +7,7 @@ import spark.util.AkkaUtils
 import akka.actor.{Terminated, ActorRef, Actor, Props}
 import java.util.concurrent.{TimeUnit, ThreadPoolExecutor, SynchronousQueue}
 import akka.remote.RemoteClientLifeCycleEvent
+import spark.Utils
 import spark.scheduler.cluster._
 import spark.scheduler.cluster.RegisteredSlave
 import spark.scheduler.cluster.LaunchTask
@@ -73,6 +74,8 @@ private[spark] object StandaloneExecutorBackend {
     // Create a new ActorSystem to run the backend, because we can't create a SparkEnv / Executor
     // before getting started with all our system properties, etc
     val (actorSystem, boundPort) = AkkaUtils.createActorSystem("sparkExecutor", hostname, 0)
+    // Debug code
+    Utils.checkHost(hostname)
     // set it
     System.setProperty("spark.hostname", hostname + ":" + boundPort)
     val actor = actorSystem.actorOf(

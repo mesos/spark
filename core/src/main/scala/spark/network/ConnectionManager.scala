@@ -20,9 +20,7 @@ import akka.util.duration._
 
 private[spark] case class ConnectionManagerId(host: String, port: Int) {
   // DEBUG code
-  if (0 != Utils.parseHostPort(host)._2) {
-    Utils.logErrorWithStack("Illegal host specified " + host + ", has port also")
-  }
+  Utils.checkHost(host)
 
   def toSocketAddress() = new InetSocketAddress(host, port)
 }

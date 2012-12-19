@@ -9,6 +9,7 @@ import org.apache.hadoop.fs.{Path, FileSystem, FileUtil}
 import scala.collection.mutable.ArrayBuffer
 import scala.io.Source
 import org.apache.hadoop.yarn.api.ApplicationConstants.Environment
+import scala.collection.mutable.{ArrayBuffer, HashMap}
 
 /**
  * Various utility methods used by Spark.
@@ -211,10 +212,7 @@ private object Utils extends Logging {
    */
   def setCustomHostname(hostname: String) {
     // DEBUG code
-    // Currently catches only ipv4 pattern, this is just a debugging tool - not rigourous !
-    if (hostname.matches("^[0-9]+(\\.[0-9]+)*$")) {
-      Utils.logErrorWithStack("Unexpected to set hostname to " + hostname + " which matches IP pattern")
-    }
+    Utils.checkHost(hostname)
     customHostname = Some(hostname)
   }
 
@@ -242,6 +240,27 @@ private object Utils extends Logging {
     retval
   }
 
+  def checkHost(host : String, message : String = "") {
+    // Currently catches only ipv4 pattern, this is just a debugging tool - not rigourous !
+    if (host.matches("^[0-9]+(\\.[0-9]+)*$")) {
+      Utils.logErrorWithStack("Unexpected to have host " + host + " which matches IP pattern. Message " + message)
+    }
+    if (Utils.parseHostPort(host)._2 != 0){
+      Utils.logErrorWithStack("Unexpected to have host " + host + " which has port in it. Message " + message)
+    }
+  }
+
+  def checkHostPort(hostPort : String, message : String = "") {
+    val (host, port) = Utils.parseHostPort(hostPort)
+    // Currently catches only ipv4 pattern, this is just a debugging tool - not rigourous !
+    if (host.matches("^[0-9]+(\\.[0-9]+)*$")) {
+      Utils.logErrorWithStack("Unexpected to have host " + host + " which matches IP pattern in " + hostPort + ". Message " + message)
+    }
+    if (port <= 0){
+      Utils.logErrorWithStack("Unexpected to have port " + port + " which is not valid in " + hostPort + ". Message " + message)
+    }
+  }
+
   def getUserNameFromEnvironment() : String = {
     // defaulting to env if -D is not present ...
     System.getProperty(Environment.USER.name, System.getenv(Environment.USER.name))
@@ -251,6 +270,7 @@ private object Utils extends Logging {
     try { throw new Exception } catch { case ex: Exception => { logError(msg, ex) } }
   }
 
+  // TODO: Cache results ?
   def parseHostPort(hostPort: String) : (String,  Int) = {
     val indx: Int = hostPort.lastIndexOf(':')
     // This is potentially broken - when dealing with ipv6 addresses for example, sigh ... but then hadoop does not support ipv6 right now.
@@ -273,7 +293,8 @@ private object Utils extends Logging {
 
   // Note that all params which start with SPARK are propagated all the way through, so if in yarn mode, this MUST be set to true.
   def isYarnMode() : Boolean = {
-    java.lang.Boolean.getBoolean("SPARK_YARN_MODE")
+    val yarnMode = System.getProperty("SPARK_YARN_MODE", System.getenv("SPARK_YARN_MODE"))
+    java.lang.Boolean.valueOf(yarnMode)
   }
 
   // Set an env variable indicating we are running in YARN mode.
@@ -281,6 +302,61 @@ private object Utils extends Logging {
   def setYarnMode() {
     System.setProperty("SPARK_YARN_MODE", "true")
   }
+
+  def setYarnMode(env : HashMap[String, String]) {
+    env("SPARK_YARN_MODE") = "true"
+  }
+
+  // Used to 'spray' available containers across the available set to ensure too many containers on same host
+  // are not used up. Used in yarn mode and in task scheduling (when there are multiple containers available
+  // to execute a task)
+  // For example: yarn can returns more containers than we would have requested under ANY, this method
+  // prioritizes how to use the allocated containers.
+  // flatten the map such that the array buffer entries are spread out across the returned value.
+  // given <host, list[container]> == <h1, [c1 .. c5]>, <h2, [c1 .. c3]>, <h3, [c1, c2]>, <h4, c1>, <h5, c1>, i
+  // the return value would be something like : h1c1, h2c1, h3c1, h4c1, h5c1, h1c2, h2c2, h3c2, h1c3, h2c3, h1c4, h1c5
+  // We then 'use' the containers in this order (consuming only the top K from this list where
+  // K = number to be user). This is to ensure that if we have multiple eligible allocations,
+  // they dont end up allocating all containers on a small number of hosts - increasing probability of
+  // multiple container failure when a host goes down.
+  // Note, there is bias for keys with higher number of entries in value to be picked first (by design)
+  // Also note that invocation of this method is expected to have containers of same 'type' 
+  // (host-local, rack-local, off-rack) and not across types : so that reordering is simply better from 
+  // the available list - everything else being same.
+  // That is, we we first consume data local, then rack local and finally off rack nodes. So the 
+  // prioritization from this method applies to within each category
+  def prioritizeContainers[K, T] (map: HashMap[K, ArrayBuffer[T]]): List[T] = {
+    val _keyList : ArrayBuffer[K] = new ArrayBuffer[K](map.size)
+    _keyList ++= map.keys
+
+    // order keyList based on population of value in map
+    val keyList = _keyList.sortWith(
+      (left: K, right: K) => map.get(left).getOrElse(Set()).size > map.get(right).getOrElse(Set()).size
+    )
+
+    val retval : ArrayBuffer[T] = new ArrayBuffer[T](keyList.size * 2)
+    var index : Int = 0
+    var found: Boolean = true
+
+    while (found){
+      found = false
+      for (key : K <- keyList) {
+        val containerList : ArrayBuffer[T] = map.get(key).getOrElse(null)
+        assert(null != containerList)
+        // Get the index'th entry for this host - if present
+        if (index < containerList.size){
+          retval += containerList.apply(index)
+          found = true
+        }
+      }
+      index += 1
+    }
+
+    retval.toList
+  }
+
+
+
 
   /**
    * Returns a standard ThreadFactory except all threads are daemons.

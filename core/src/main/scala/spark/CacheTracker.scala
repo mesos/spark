@@ -54,6 +54,7 @@ private[spark] class CacheTrackerActor extends Actor with Logging {
       sender ! true
 
     case AddedToCache(rddId, partition, hostPort, size) =>
+      Utils.checkHostPort(hostPort)
       slaveUsage.put(hostPort, getCacheUsage(hostPort) + size)
       locs(rddId)(partition) = hostPort :: locs(rddId)(partition)
       sender ! true

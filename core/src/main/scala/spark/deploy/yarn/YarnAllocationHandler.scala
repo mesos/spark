@@ -1,6 +1,6 @@
 package spark.deploy.yarn
 
-import spark.{Logging, SplitInfo}
+import spark.{Logging, SplitInfo, Utils}
 import scala.collection
 import org.apache.hadoop.yarn.api.records.{AMResponse, ApplicationAttemptId, ContainerId, Priority, Resource, ResourceRequest, ContainerStatus, Container}
 import spark.scheduler.cluster.StandaloneSchedulerBackend
@@ -60,48 +60,6 @@ private[yarn] class YarnAllocationHandler(val conf: Configuration, val resourceM
 
   def isResourceConstraintSatisfied(container: Container) : Boolean = {
     container.getResource.getMemory >= workerMemory
-  }
-
-  // yarn can returns more containers than we would have requested under ANY, this method 
-  // prioritizes how to use the allocated containers.
-  // flatten the map such that the array buffer entries are spread out across the returned value.
-  // given <host, container_count> == <h1, 5>, <h2, 3>, <h3, 2>, <h4, 1>, <h5, 1>, the return value 
-  // would be something like : h1, h2, h3, h4, h5, h1, h2, h3, h1, h2, h1, h1
-  // We then 'use' the containers in this order (consuming only the top K from this list where 
-  // K = number to be user). This is to ensure that if we have multiple eligible allocations, 
-  // then dont end up allocating all containers on a small number of hosts - increasing probability of 
-  // multiple container failure when a host goes down.
-  // Note, there is bias for keys with higher number of entries in value to be picked first (by design)
-  // Also note that we first consume data local, then rack local and finally off rack nodes. So the prioritization
-  // from this method applies to within each category
-  def prioritizeContainers(map: HashMap[String, ArrayBuffer[Container]]): List[Container] = {
-    val _keyList : ArrayBuffer[String] = new ArrayBuffer[String](map.size)
-    _keyList ++= map.keys
-
-    // order keyList based on population of value in map
-    val keyList = _keyList.sortWith(
-      (left: String, right: String) => map.get(left).getOrElse(Set()).size > map.get(right).getOrElse(Set()).size
-    )
-
-    val retval : ArrayBuffer[Container] = new ArrayBuffer[Container](keyList.size * 2)
-    var index : Int = 0
-    var found: Boolean = true
-
-    while (found){
-      found = false
-      for (key : String <- keyList) {
-        val containerList : ArrayBuffer[Container] = map.get(key).getOrElse(null)
-        assert(null != containerList)
-        // Get the index'th entry for this host - if present
-        if (index < containerList.size){
-          retval += containerList.apply(index)
-          found = true
-        }
-      }
-      index += 1
-    }
-
-    retval.toList
   }
 
   def allocateContainers(workersToRequest: Int) {
@@ -216,9 +174,9 @@ private[yarn] class YarnAllocationHandler(val conf: Configuration, val resourceM
       // if there are sufficiently large number of hosts/containers.
 
       val allocatedContainers : ArrayBuffer[Container] = new ArrayBuffer[Container](_allocatedContainers.size)
-      allocatedContainers ++= prioritizeContainers(dataLocalContainers)
-      allocatedContainers ++= prioritizeContainers(rackLocalContainers)
-      allocatedContainers ++= prioritizeContainers(offRackContainers)
+      allocatedContainers ++= Utils.prioritizeContainers(dataLocalContainers)
+      allocatedContainers ++= Utils.prioritizeContainers(rackLocalContainers)
+      allocatedContainers ++= Utils.prioritizeContainers(offRackContainers)
 
       // Run each of the allocated containers
       for (container : Container <- allocatedContainers) {

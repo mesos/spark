@@ -20,31 +20,34 @@ import com.ning.compress.lzf.{LZFInputStream, LZFOutputStream}
 import sun.nio.ch.DirectBuffer
 
 
-private[spark] class BlockManagerId(var ip: String, var port: Int) extends Externalizable {
+private[spark] class BlockManagerId(var host: String, var port: Int) extends Externalizable {
   def this() = this(null, 0)  // For deserialization only
 
   def this(in: ObjectInput) = this(in.readUTF(), in.readInt())
 
   def hostPort : String = {
-    if (port > 0) ip + ":" + port else ip
+    // DEBUG code
+    Utils.checkHost(host)
+
+    if (port > 0) host + ":" + port else host
   }
 
   override def writeExternal(out: ObjectOutput) {
-    out.writeUTF(ip)
+    out.writeUTF(host)
     out.writeInt(port)
   }
 
   override def readExternal(in: ObjectInput) {
-    ip = in.readUTF()
+    host = in.readUTF()
     port = in.readInt()
   }
 
-  override def toString = "BlockManagerId(" + ip + ", " + port + ")"
+  override def toString = "BlockManagerId(" + host + ", " + port + ")"
 
-  override def hashCode = ip.hashCode * 41 + port
+  override def hashCode = host.hashCode * 41 + port
 
   override def equals(that: Any) = that match {
-    case id: BlockManagerId => port == id.port && ip == id.ip
+    case id: BlockManagerId => port == id.port && host == id.host
     case _ => false
   }
 }
@@ -365,7 +368,7 @@ class BlockManager(val master: BlockManagerMaster, val serializer: Serializer, m
     for (loc <- locations) {
       logDebug("Getting remote block " + blockId + " from " + loc)
       val data = BlockManagerWorker.syncGetBlock(
-          GetBlock(blockId), ConnectionManagerId(loc.ip, loc.port))
+          GetBlock(blockId), ConnectionManagerId(loc.host, loc.port))
       if (data != null) {
         logDebug("Data is not null: " + data)
         return Some(dataDeserialize(blockId, data))
@@ -425,8 +428,8 @@ class BlockManager(val master: BlockManagerMaster, val serializer: Serializer, m
 
     def sendRequest(req: FetchRequest) {
       logDebug("Sending request for %d blocks (%s) from %s".format(
-        req.blocks.size, Utils.memoryBytesToString(req.size), req.address.ip))
-      val cmId = new ConnectionManagerId(req.address.ip, req.address.port)
+        req.blocks.size, Utils.memoryBytesToString(req.size), req.address.host))
+      val cmId = new ConnectionManagerId(req.address.host, req.address.port)
       val blockMessageArray = new BlockMessageArray(req.blocks.map {
         case (blockId, size) => BlockMessage.fromGetBlock(GetBlock(blockId))
       })
@@ -745,7 +748,7 @@ class BlockManager(val master: BlockManagerMaster, val serializer: Serializer, m
       logDebug("Try to replicate BlockId " + blockId + " once; The size of the data is "
         + data.limit() + " Bytes. To node: " + peer)
       if (!BlockManagerWorker.syncPutBlock(PutBlock(blockId, data, tLevel),
-        new ConnectionManagerId(peer.ip, peer.port))) {
+        new ConnectionManagerId(peer.host, peer.port))) {
         logError("Failed to call syncPutBlock to " + peer)
       }
       logDebug("Replicated BlockId " + blockId + " once used " +

@@ -99,7 +99,7 @@ private[spark] class BlockManagerMasterActor(val isLocal: Boolean) extends Actor
     private val blocks = new JHashMap[String, StorageLevel]
 
     logInfo("Registering block manager %s:%d with %s RAM".format(
-      blockManagerId.ip, blockManagerId.port, Utils.memoryBytesToString(maxMem)))
+      blockManagerId.host, blockManagerId.port, Utils.memoryBytesToString(maxMem)))
     
     def updateLastSeenMs() {
       lastSeenMs = System.currentTimeMillis() / 1000
@@ -125,12 +125,12 @@ private[spark] class BlockManagerMasterActor(val isLocal: Boolean) extends Actor
         if (storageLevel.useMemory) {
           remainingMem -= memSize
           logInfo("Added %s in memory on %s:%d (size: %s, free: %s)".format(
-            blockId, blockManagerId.ip, blockManagerId.port, Utils.memoryBytesToString(memSize),
+            blockId, blockManagerId.host, blockManagerId.port, Utils.memoryBytesToString(memSize),
             Utils.memoryBytesToString(remainingMem)))
         }
         if (storageLevel.useDisk) {
           logInfo("Added %s on disk on %s:%d (size: %s)".format(
-            blockId, blockManagerId.ip, blockManagerId.port, Utils.memoryBytesToString(diskSize)))
+            blockId, blockManagerId.host, blockManagerId.port, Utils.memoryBytesToString(diskSize)))
         }
       } else if (blocks.containsKey(blockId)) {
         // If isValid is not true, drop the block.
@@ -139,12 +139,12 @@ private[spark] class BlockManagerMasterActor(val isLocal: Boolean) extends Actor
         if (originalLevel.useMemory) {
           remainingMem += memSize
           logInfo("Removed %s on %s:%d in memory (size: %s, free: %s)".format(
-            blockId, blockManagerId.ip, blockManagerId.port, Utils.memoryBytesToString(memSize),
+            blockId, blockManagerId.host, blockManagerId.port, Utils.memoryBytesToString(memSize),
             Utils.memoryBytesToString(remainingMem)))
         }
         if (originalLevel.useDisk) {
           logInfo("Removed %s on %s:%d on disk (size: %s)".format(
-            blockId, blockManagerId.ip, blockManagerId.port, Utils.memoryBytesToString(diskSize)))
+            blockId, blockManagerId.host, blockManagerId.port, Utils.memoryBytesToString(diskSize)))
         }
       }
     }
@@ -174,8 +174,8 @@ private[spark] class BlockManagerMasterActor(val isLocal: Boolean) extends Actor
   def removeHost(hostPort: String) {
     logInfo("Trying to remove the host: " + hostPort + " from BlockManagerMaster.")
     logInfo("Previous hosts: " + blockManagerInfo.keySet.toSeq)
-    val (ip, port) = Utils.parseHostPort(hostPort)
-    blockManagerInfo.remove(new BlockManagerId(ip, port))
+    val (host, port) = Utils.parseHostPort(hostPort)
+    blockManagerInfo.remove(new BlockManagerId(host, port))
     logInfo("Current hosts: " + blockManagerInfo.keySet.toSeq)
     sender ! true
   }
@@ -214,7 +214,7 @@ private[spark] class BlockManagerMasterActor(val isLocal: Boolean) extends Actor
     val startTimeMs = System.currentTimeMillis()
     val tmp = " " + blockManagerId + " "
     logDebug("Got in register 0" + tmp + Utils.getUsedTimeMs(startTimeMs))
-    if (blockManagerId.ip == Utils.localHostPort() && !isLocal) {
+    if (blockManagerId.hostPort == Utils.localHostPort() && !isLocal) {
       logInfo("Got Register Msg from master node, don't register it")
     } else {
       blockManagerInfo += (blockManagerId -> new BlockManagerInfo(
