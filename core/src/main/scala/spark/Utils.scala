@@ -3,7 +3,7 @@ package spark
 import java.io._
 import java.net.{InetAddress, URL, URI}
 import java.util.{Locale, Random, UUID}
-import java.util.concurrent.{Executors, ThreadFactory, ThreadPoolExecutor}
+import java.util.concurrent.{ConcurrentHashMap, Executors, ThreadFactory, ThreadPoolExecutor}
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{Path, FileSystem, FileUtil}
 import scala.collection.mutable.ArrayBuffer
@@ -240,6 +240,7 @@ private object Utils extends Logging {
     retval
   }
 
+  // Used by DEBUG code : remove when all testing done
   def checkHost(host : String, message : String = "") {
     // Currently catches only ipv4 pattern, this is just a debugging tool - not rigourous !
     if (host.matches("^[0-9]+(\\.[0-9]+)*$")) {
@@ -250,6 +251,7 @@ private object Utils extends Logging {
     }
   }
 
+  // Used by DEBUG code : remove when all testing done
   def checkHostPort(hostPort : String, message : String = "") {
     val (host, port) = Utils.parseHostPort(hostPort)
     // Currently catches only ipv4 pattern, this is just a debugging tool - not rigourous !
@@ -266,18 +268,27 @@ private object Utils extends Logging {
     System.getProperty(Environment.USER.name, System.getenv(Environment.USER.name))
   }
 
+  // Used by DEBUG code : remove when all testing done
   def logErrorWithStack(msg: String) {
     try { throw new Exception } catch { case ex: Exception => { logError(msg, ex) } }
   }
 
-  // TODO: Cache results ?
+  private val hostPortParseResults : ConcurrentHashMap[String, (String, Int)] = new ConcurrentHashMap[String, (String, Int)]()
   def parseHostPort(hostPort: String) : (String,  Int) = {
+    if (hostPortParseResults.containsKey(hostPort)) return hostPortParseResults.get(hostPort)
+
     val indx: Int = hostPort.lastIndexOf(':')
     // This is potentially broken - when dealing with ipv6 addresses for example, sigh ... but then hadoop does not support ipv6 right now.
     // For now, we assume that if port exists, then it is valid - not check if it is an int > 0
-    if (-1 == indx) return (hostPort, 0)
+    if (-1 == indx) {
+      val retval = (hostPort, 0)
+      hostPortParseResults.put(hostPort, retval)
+      return retval
+    }
 
-    (hostPort.substring(0, indx).trim(), hostPort.substring(indx + 1).trim().toInt)
+    val retval = (hostPort.substring(0, indx).trim(), hostPort.substring(indx + 1).trim().toInt)
+    hostPortParseResults.put(hostPort, retval)
+    return retval
   }
 
   def addIfNoPort(hostPort: String,  port: Int) : String = {
