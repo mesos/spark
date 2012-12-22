@@ -65,12 +65,9 @@ class SparkContext(
     environment: Map[String, String],
     // This is used only by yarn for now, but should be relevant to other cluster types (mesos, etc) too.
     // This is typically generated from InputFormatInfo.computePreferredLocations .. host, set of data-local splits on host
-    val preferredNodeLocationData: scala.collection.Map[String, scala.collection.Set[SplitInfo]])
+    val preferredNodeLocationData: scala.collection.Map[String, scala.collection.Set[SplitInfo]] = scala.collection.immutable.Map())
   extends Logging {
 
-
-  def this(master: String, jobName: String, sparkHome: String, jars: Seq[String], environment: Map[String, String]) =
-    this(master, jobName, sparkHome, jars, environment, scala.collection.immutable.Map())
 
   /**
    * @param master Cluster URL to connect to (e.g. mesos://host:port, spark://host:port, local[4]).
@@ -94,8 +91,11 @@ class SparkContext(
   // Set Spark master host and port system properties
   if (System.getProperty("spark.master.host") == null) {
     // For YARN, set to hostname - this is only place where the code overlaps between various modes.
+    /*
     if (Utils.isYarnMode()) System.setProperty("spark.master.host", Utils.localHostName())
     else System.setProperty("spark.master.host", Utils.localIpAddress())
+    */
+    System.setProperty("spark.master.host", Utils.localHostName())
   }
   if (System.getProperty("spark.master.port") == null) {
     System.setProperty("spark.master.port", "0")

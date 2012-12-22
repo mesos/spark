@@ -8,7 +8,7 @@ import org.apache.hadoop.conf.Configuration
  *
  * This is a simple extension to ClusterScheduler - to ensure that appropriate initialization of ApplicationMaster, etc is done
  */
-private[spark] class YarnClusterScheduler(sc: SparkContext, conf : Configuration) extends ClusterScheduler(sc) {
+private[spark] class YarnClusterScheduler(sc: SparkContext, conf: Configuration) extends ClusterScheduler(sc) {
 
   def this(sc: SparkContext) = this(sc, new Configuration())
 
@@ -18,14 +18,14 @@ private[spark] class YarnClusterScheduler(sc: SparkContext, conf : Configuration
 
 
   // By default, rack is unknown
-  override def getRackForHost(hostPort: String) : Option[String] = {
+  override def getRackForHost(hostPort: String): Option[String] = {
     val host = Utils.parseHostPort(hostPort)._1
-    val retval : String = YarnAllocationHandler.lookupRack(conf, host)
+    val retval = YarnAllocationHandler.lookupRack(conf, host)
     if (null != retval) Some(retval) else None
   }
 
   override def postStartHook() {
-    val sparkContextInitialized : Boolean = ApplicationMaster.sparkContextInitialized(sc)
+    val sparkContextInitialized = ApplicationMaster.sparkContextInitialized(sc)
     if (sparkContextInitialized){
       // Wait for a few seconds for the slaves to bootstrap and register with master - best case attempt
       Thread.sleep(3000L)

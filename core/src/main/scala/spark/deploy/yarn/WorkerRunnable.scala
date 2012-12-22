@@ -23,8 +23,8 @@ class WorkerRunnable(container: Container, conf: Configuration, masterAddress: S
     slaveId: String, hostname: String, workerMemory: Int, workerCores: Int) 
     extends Runnable with Logging {
   
-  var rpc : YarnRPC = YarnRPC.create(conf)
-  var cm : ContainerManager = null
+  var rpc: YarnRPC = YarnRPC.create(conf)
+  var cm: ContainerManager = null
   val yarnConf: YarnConfiguration = new YarnConfiguration(conf)
   
   def run = {
@@ -104,7 +104,7 @@ class WorkerRunnable(container: Container, conf: Configuration, masterAddress: S
     return locaResources
   }
   
-  def prepareEnvironment : HashMap[String, String] = {
+  def prepareEnvironment: HashMap[String, String] = {
     val env = new HashMap[String, String]()
     // should we add this ?
     Apps.addToEnvironment(env, Environment.USER.name, Utils.getUserNameFromEnvironment())
@@ -116,7 +116,7 @@ class WorkerRunnable(container: Container, conf: Configuration, masterAddress: S
     return env
   }
   
-  def connectToCM : ContainerManager = {
+  def connectToCM: ContainerManager = {
     val cmIpPortStr = container.getNodeId().getHost() + ":" + container.getNodeId().getPort()
     val cmAddress = NetUtils.createSocketAddr(cmIpPortStr)
     logInfo("Connecting to ContainerManager at " + cmIpPortStr)

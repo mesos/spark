@@ -85,9 +85,6 @@ private[spark] class ClusterScheduler(val sc: SparkContext)
     }
   }
 
-  override def postStartHook() {
-  }
-
   def submitTasks(taskSet: TaskSet) {
     val tasks = taskSet.tasks
     logInfo("Adding task set " + taskSet.id + " with " + tasks.length + " tasks")
@@ -133,15 +130,15 @@ private[spark] class ClusterScheduler(val sc: SparkContext)
       for (manager <- activeTaskSetsQueue.sortBy(m => (m.taskSet.priority, m.taskSet.stageId))) {
 
         // Split offers based on host local, rack local and off-rack tasks.
-        val hostLocalOffers : HashMap[String, ArrayBuffer[Int]] = new HashMap[String, ArrayBuffer[Int]]()
-        val rackLocalOffers : HashMap[String, ArrayBuffer[Int]] = new HashMap[String, ArrayBuffer[Int]]()
-        val otherOffers : HashMap[String, ArrayBuffer[Int]] = new HashMap[String, ArrayBuffer[Int]]()
+        val hostLocalOffers = new HashMap[String, ArrayBuffer[Int]]()
+        val rackLocalOffers = new HashMap[String, ArrayBuffer[Int]]()
+        val otherOffers = new HashMap[String, ArrayBuffer[Int]]()
 
         for (i <- 0 until offers.size) {
           val hostPort = offers(i).hostPort
           // DEBUG code
           Utils.checkHostPort(hostPort)
-          val host = Utils.parseHostPort(hostPort)._1;
+          val host = Utils.parseHostPort(hostPort)._1
           val numHostLocalTasks =  math.max(0, math.min(manager.numPendingTasksForHost(hostPort), availableCpus(i)))
           if (numHostLocalTasks > 0){
             val list = hostLocalOffers.getOrElseUpdate(host, new ArrayBuffer[Int])
@@ -161,7 +158,7 @@ private[spark] class ClusterScheduler(val sc: SparkContext)
           }
         }
 
-        val offersPriorityList : ArrayBuffer[Int] = new ArrayBuffer[Int](
+        val offersPriorityList = new ArrayBuffer[Int](
           hostLocalOffers.size + rackLocalOffers.size + otherOffers.size)
         // First host local, then rack, then others
         offersPriorityList ++= Utils.prioritizeContainers(hostLocalOffers)
@@ -278,7 +275,7 @@ private[spark] class ClusterScheduler(val sc: SparkContext)
 
     // sleeping for an arbitrary 5 seconds : to ensure that messages are sent out.
     // TODO: Do something better !
-    Thread.sleep(5000L);
+    Thread.sleep(5000L)
   }
 
   override def defaultParallelism() = backend.defaultParallelism()
@@ -319,5 +316,5 @@ private[spark] class ClusterScheduler(val sc: SparkContext)
 
 
   // By default, rack is unknown
-  def getRackForHost(value: String) : Option[String] = None
+  def getRackForHost(value: String): Option[String] = None
 }

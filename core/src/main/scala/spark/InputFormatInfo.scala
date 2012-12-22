@@ -13,14 +13,14 @@ import scala.collection.JavaConversions._
 // So that we do not need to worry about the differences.
 class SplitInfo(val inputFormatClazz: Class[_], val hostLocation: String, val path: String, 
                 val length: Long, val underlyingSplit: Any) {
-  override def toString() : String = {
+  override def toString(): String = {
     "SplitInfo " + super.toString + " .. inputFormatClazz " + inputFormatClazz + 
       ", hostLocation : " + hostLocation + ", path : " + path + 
       ", length : " + length + ", underlyingSplit " + underlyingSplit
   }
 
-  override def hashCode() : Int = {
-    var hashCode : Int = inputFormatClazz.hashCode
+  override def hashCode(): Int = {
+    var hashCode = inputFormatClazz.hashCode
     hashCode = hashCode * 31 + hostLocation.hashCode
     hashCode = hashCode * 31 + path.hashCode
     // ignore overflow ? It is hashcode anyway !
@@ -47,7 +47,7 @@ class SplitInfo(val inputFormatClazz: Class[_], val hostLocation: String, val pa
 object SplitInfo {
 
   def toSplitInfo(inputFormatClazz: Class[_], path: String, 
-                  mapredSplit: org.apache.hadoop.mapred.InputSplit) : Seq[SplitInfo] = {
+                  mapredSplit: org.apache.hadoop.mapred.InputSplit): Seq[SplitInfo] = {
     val retval = ArrayBuffer[SplitInfo]()
     val length = mapredSplit.getLength
     for (host <- mapredSplit.getLocations) {
@@ -57,7 +57,7 @@ object SplitInfo {
   }
 
   def toSplitInfo(inputFormatClazz: Class[_], path: String, 
-                  mapreduceSplit: org.apache.hadoop.mapreduce.InputSplit) : Seq[SplitInfo] = {
+                  mapreduceSplit: org.apache.hadoop.mapreduce.InputSplit): Seq[SplitInfo] = {
     val retval = ArrayBuffer[SplitInfo]()
     val length = mapreduceSplit.getLength
     for (host <- mapreduceSplit.getLocations) {
@@ -79,12 +79,12 @@ class InputFormatInfo(val configuration: Configuration, val inputFormatClazz: Cl
 
   validate()
 
-  override def toString() : String = {
+  override def toString(): String = {
     "InputFormatInfo " + super.toString + " .. inputFormatClazz " + inputFormatClazz + ", path : " + path
   }
 
-  override def hashCode() : Int = {
-    var hashCode : Int = inputFormatClazz.hashCode
+  override def hashCode(): Int = {
+    var hashCode = inputFormatClazz.hashCode
     hashCode = hashCode * 31 + path.hashCode
     hashCode
   }
@@ -127,16 +127,16 @@ class InputFormatInfo(val configuration: Configuration, val inputFormatClazz: Cl
 
   // This method does not expect failures, since validate has already passed ...
   private def prefLocsFromMapreduceInputFormat(): Set[SplitInfo] = {
-    val conf : JobConf = new JobConf(configuration)
+    val conf = new JobConf(configuration)
     FileInputFormat.setInputPaths(conf, path)
 
-    val instance : org.apache.hadoop.mapreduce.InputFormat[_, _] =
+    val instance: org.apache.hadoop.mapreduce.InputFormat[_, _] =
       ReflectionUtils.newInstance(inputFormatClazz.asInstanceOf[Class[_]], conf).asInstanceOf[
         org.apache.hadoop.mapreduce.InputFormat[_, _]]
-    val job : Job = new Job(conf)
+    val job = new Job(conf)
 
     val retval = ArrayBuffer[SplitInfo]()
-    val list : java.util.List[org.apache.hadoop.mapreduce.InputSplit] = instance.getSplits(job)
+    val list = instance.getSplits(job)
     for (split <- list) {
       retval ++= SplitInfo.toSplitInfo(inputFormatClazz, path, split)
     }
@@ -146,14 +146,14 @@ class InputFormatInfo(val configuration: Configuration, val inputFormatClazz: Cl
 
   // This method does not expect failures, since validate has already passed ...
   private def prefLocsFromMapredInputFormat(): Set[SplitInfo] = {
-    val jobConf : JobConf = new JobConf(configuration)
+    val jobConf = new JobConf(configuration)
     FileInputFormat.setInputPaths(jobConf, path)
 
-    val instance : org.apache.hadoop.mapred.InputFormat[_, _] =
+    val instance: org.apache.hadoop.mapred.InputFormat[_, _] =
       ReflectionUtils.newInstance(inputFormatClazz.asInstanceOf[Class[_]], jobConf).asInstanceOf[
         org.apache.hadoop.mapred.InputFormat[_, _]]
 
-    val retval : ArrayBuffer[SplitInfo] = ArrayBuffer[SplitInfo]()
+    val retval = ArrayBuffer[SplitInfo]()
     instance.getSplits(jobConf, jobConf.getNumMapTasks()).foreach(
         elem => retval ++= SplitInfo.toSplitInfo(inputFormatClazz, path, elem)
     )
@@ -161,7 +161,7 @@ class InputFormatInfo(val configuration: Configuration, val inputFormatClazz: Cl
     return retval.toSet
    }
 
-  private def findPreferredLocations() : Set[SplitInfo] = {
+  private def findPreferredLocations(): Set[SplitInfo] = {
     logDebug("mapreduceInputFormat : " + mapreduceInputFormat + ", mapredInputFormat : " + mapredInputFormat + 
       ", inputFormatClazz : " + inputFormatClazz)
     if (mapreduceInputFormat) {
@@ -196,17 +196,16 @@ object InputFormatInfo {
 
     PS: I know the wording here is weird, hopefully it makes some sense !
   */
-  def computePreferredLocations(formats: Seq[InputFormatInfo]) : HashMap[String, HashSet[SplitInfo]] = {
+  def computePreferredLocations(formats: Seq[InputFormatInfo]): HashMap[String, HashSet[SplitInfo]] = {
 
-    val nodeToSplit : HashMap[String, HashSet[SplitInfo]] = new HashMap[String, HashSet[SplitInfo]]
-    for (inputSplit : InputFormatInfo <- formats) {
-      val splits : Set[SplitInfo] = inputSplit.findPreferredLocations()
+    val nodeToSplit = new HashMap[String, HashSet[SplitInfo]]
+    for (inputSplit <- formats) {
+      val splits = inputSplit.findPreferredLocations()
 
-      for (split : SplitInfo <- splits){
+      for (split <- splits){
         val location = split.hostLocation
-        val set : HashSet[SplitInfo] = nodeToSplit.get(location).getOrElse(new HashSet[SplitInfo])
+        val set = nodeToSplit.getOrElseUpdate(location, new HashSet[SplitInfo])
         set += split
-        nodeToSplit.put(location, set)
       }
     }
 

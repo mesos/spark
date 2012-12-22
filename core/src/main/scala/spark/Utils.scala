@@ -224,7 +224,7 @@ private object Utils extends Logging {
   }
 
   // expensive ? cache ?
-  def getAddressHostName(address: String) : String = {
+  def getAddressHostName(address: String): String = {
     InetAddress.getByName(address).getHostName
   }
 
@@ -241,7 +241,7 @@ private object Utils extends Logging {
   }
 
   // Used by DEBUG code : remove when all testing done
-  def checkHost(host : String, message : String = "") {
+  def checkHost(host: String, message: String = "") {
     // Currently catches only ipv4 pattern, this is just a debugging tool - not rigourous !
     if (host.matches("^[0-9]+(\\.[0-9]+)*$")) {
       Utils.logErrorWithStack("Unexpected to have host " + host + " which matches IP pattern. Message " + message)
@@ -252,7 +252,7 @@ private object Utils extends Logging {
   }
 
   // Used by DEBUG code : remove when all testing done
-  def checkHostPort(hostPort : String, message : String = "") {
+  def checkHostPort(hostPort: String, message: String = "") {
     val (host, port) = Utils.parseHostPort(hostPort)
     // Currently catches only ipv4 pattern, this is just a debugging tool - not rigourous !
     if (host.matches("^[0-9]+(\\.[0-9]+)*$")) {
@@ -263,7 +263,7 @@ private object Utils extends Logging {
     }
   }
 
-  def getUserNameFromEnvironment() : String = {
+  def getUserNameFromEnvironment(): String = {
     // defaulting to env if -D is not present ...
     System.getProperty(Environment.USER.name, System.getenv(Environment.USER.name))
   }
@@ -273,9 +273,15 @@ private object Utils extends Logging {
     try { throw new Exception } catch { case ex: Exception => { logError(msg, ex) } }
   }
 
-  private val hostPortParseResults : ConcurrentHashMap[String, (String, Int)] = new ConcurrentHashMap[String, (String, Int)]()
-  def parseHostPort(hostPort: String) : (String,  Int) = {
-    if (hostPortParseResults.containsKey(hostPort)) return hostPortParseResults.get(hostPort)
+  // Typically, this will be of order of number of nodes in cluster
+  // If not, we should change it to LRUCache or something.
+  private val hostPortParseResults = new ConcurrentHashMap[String, (String, Int)]()
+  def parseHostPort(hostPort: String): (String,  Int) = {
+    {
+      // Check cache first.
+      var cached = hostPortParseResults.get(hostPort)
+      if (null != cached) return cached
+    }
 
     val indx: Int = hostPort.lastIndexOf(':')
     // This is potentially broken - when dealing with ipv6 addresses for example, sigh ... but then hadoop does not support ipv6 right now.
@@ -291,8 +297,8 @@ private object Utils extends Logging {
     return retval
   }
 
-  def addIfNoPort(hostPort: String,  port: Int) : String = {
-    if (port <= 0) throw new IllegalArgumentException("Invalid port specified " + port);
+  def addIfNoPort(hostPort: String,  port: Int): String = {
+    if (port <= 0) throw new IllegalArgumentException("Invalid port specified " + port)
 
     // This is potentially broken - when dealing with ipv6 addresses for example, sigh ... but then hadoop does not support ipv6 right now.
     // For now, we assume that if port exists, then it is valid - not check if it is an int > 0
@@ -303,7 +309,7 @@ private object Utils extends Logging {
   }
 
   // Note that all params which start with SPARK are propagated all the way through, so if in yarn mode, this MUST be set to true.
-  def isYarnMode() : Boolean = {
+  def isYarnMode(): Boolean = {
     val yarnMode = System.getProperty("SPARK_YARN_MODE", System.getenv("SPARK_YARN_MODE"))
     java.lang.Boolean.valueOf(yarnMode)
   }
@@ -314,7 +320,7 @@ private object Utils extends Logging {
     System.setProperty("SPARK_YARN_MODE", "true")
   }
 
-  def setYarnMode(env : HashMap[String, String]) {
+  def setYarnMode(env: HashMap[String, String]) {
     env("SPARK_YARN_MODE") = "true"
   }
 
@@ -337,22 +343,22 @@ private object Utils extends Logging {
   // That is, we we first consume data local, then rack local and finally off rack nodes. So the 
   // prioritization from this method applies to within each category
   def prioritizeContainers[K, T] (map: HashMap[K, ArrayBuffer[T]]): List[T] = {
-    val _keyList : ArrayBuffer[K] = new ArrayBuffer[K](map.size)
+    val _keyList = new ArrayBuffer[K](map.size)
     _keyList ++= map.keys
 
     // order keyList based on population of value in map
     val keyList = _keyList.sortWith(
-      (left: K, right: K) => map.get(left).getOrElse(Set()).size > map.get(right).getOrElse(Set()).size
+      (left, right) => map.get(left).getOrElse(Set()).size > map.get(right).getOrElse(Set()).size
     )
 
-    val retval : ArrayBuffer[T] = new ArrayBuffer[T](keyList.size * 2)
-    var index : Int = 0
-    var found: Boolean = true
+    val retval = new ArrayBuffer[T](keyList.size * 2)
+    var index = 0
+    var found = true
 
     while (found){
       found = false
-      for (key : K <- keyList) {
-        val containerList : ArrayBuffer[T] = map.get(key).getOrElse(null)
+      for (key <- keyList) {
+        val containerList: ArrayBuffer[T] = map.get(key).getOrElse(null)
         assert(null != containerList)
         // Get the index'th entry for this host - if present
         if (index < containerList.size){

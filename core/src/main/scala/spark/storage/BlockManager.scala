@@ -25,7 +25,7 @@ private[spark] class BlockManagerId(var host: String, var port: Int) extends Ext
 
   def this(in: ObjectInput) = this(in.readUTF(), in.readInt())
 
-  def hostPort : String = {
+  def hostPort: String = {
     // DEBUG code
     Utils.checkHost(host)
 
@@ -870,7 +870,7 @@ class BlockManager(val master: BlockManagerMaster, val serializer: Serializer, m
     // local directory specified as hdfs ?
     if (localDir.startsWith("hdfs://")) {
       // todo ?
-      println("Unsupported as of now ... " + localDir);
+      println("Unsupported as of now ... " + localDir)
     }
     else {
       // just diskstore ...

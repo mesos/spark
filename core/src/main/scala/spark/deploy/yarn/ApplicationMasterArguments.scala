@@ -4,22 +4,22 @@ import spark.util.IntParam
 import collection.mutable.ArrayBuffer
 
 class ApplicationMasterArguments(val args: Array[String]) {
-  var userJar : String = null
-  var userClass : String = null
-  var userArgs : Seq[String] = Seq[String]()
+  var userJar: String = null
+  var userClass: String = null
+  var userArgs: Seq[String] = Seq[String]()
   var workerMemory = 1024
   var workerCores = 1
   var numWorkers = 2
 
   parseArgs(args.toList)
   
-  def parseArgs(args: List[String]) : Unit = {
-    val userArgsSeq : ArrayBuffer[String] = new ArrayBuffer[String]()
+  def parseArgs(args: List[String]): Unit = {
+    val userArgsSeq = new ArrayBuffer[String]()
     parseImpl(userArgsSeq, args)
     userArgs = userArgsSeq.readOnly
   }
 
-  def parseImpl(userArgsSeq : ArrayBuffer[String], args: List[String]) : Unit = {
+  def parseImpl(userArgsSeq: ArrayBuffer[String], args: List[String]): Unit = {
     args match {
       case ("--jar") :: value :: tail =>
         userJar = value

@@ -16,17 +16,17 @@ import spark.{SparkContext, Logging, Utils}
 import org.apache.hadoop.security.UserGroupInformation
 import java.security.PrivilegedExceptionAction
 
-class ApplicationMaster(args: ApplicationMasterArguments, conf : Configuration) extends Logging {
+class ApplicationMaster(args: ApplicationMasterArguments, conf: Configuration) extends Logging {
 
   def this(args: ApplicationMasterArguments) = this(args, new Configuration())
   
-  private var rpc : YarnRPC = YarnRPC.create(conf)
-  private var resourceManager : AMRMProtocol = null
-  private var appAttemptId : ApplicationAttemptId = null
-  private var userThread : Thread = null
+  private var rpc: YarnRPC = YarnRPC.create(conf)
+  private var resourceManager: AMRMProtocol = null
+  private var appAttemptId: ApplicationAttemptId = null
+  private var userThread: Thread = null
   private val yarnConf: YarnConfiguration = new YarnConfiguration(conf)
 
-  private var yarnAllocator : YarnAllocationHandler = null
+  private var yarnAllocator: YarnAllocationHandler = null
 
   def run() {
     
@@ -71,7 +71,7 @@ class ApplicationMaster(args: ApplicationMasterArguments, conf : Configuration) 
     System.exit(0)
   }
   
-  private def getApplicationAttemptId() : ApplicationAttemptId = {
+  private def getApplicationAttemptId(): ApplicationAttemptId = {
     val envs = System.getenv()
     val containerIdString = envs.get(ApplicationConstants.AM_CONTAINER_ID_ENV)
     val containerId = ConverterUtils.toContainerId(containerIdString)
@@ -80,7 +80,7 @@ class ApplicationMaster(args: ApplicationMasterArguments, conf : Configuration) 
     return appAttemptId
   }
   
-  private def registerWithResourceManager() : AMRMProtocol = {
+  private def registerWithResourceManager(): AMRMProtocol = {
     val rmAddress = NetUtils.createSocketAddr(yarnConf.get(
       YarnConfiguration.RM_SCHEDULER_ADDRESS,
       YarnConfiguration.DEFAULT_RM_SCHEDULER_ADDRESS))
@@ -88,7 +88,7 @@ class ApplicationMaster(args: ApplicationMasterArguments, conf : Configuration) 
     return rpc.getProxy(classOf[AMRMProtocol], rmAddress, conf).asInstanceOf[AMRMProtocol]
   }
   
-  private def registerApplicationMaster() : RegisterApplicationMasterResponse = {
+  private def registerApplicationMaster(): RegisterApplicationMasterResponse = {
     logInfo("Registering the ApplicationMaster")
     val appMasterRequest = Records.newRecord(classOf[RegisterApplicationMasterRequest])
       .asInstanceOf[RegisterApplicationMasterRequest]
@@ -114,21 +114,21 @@ class ApplicationMaster(args: ApplicationMasterArguments, conf : Configuration) 
         logInfo("Master now available: " + masterHost + ":" + masterPort)
         masterUp = true
       } catch {
-        case e : Exception =>
+        case e: Exception =>
           logError("Failed to connect to master at " + masterHost + ":" + masterPort)
         Thread.sleep(100)
       }
     }
   }
   
-  private def startUserClass() : Thread  = {
+  private def startUserClass(): Thread  = {
     logInfo("Starting the user JAR in a separate Thread")
     val mainMethod = Class.forName(args.userClass, false, Thread.currentThread.getContextClassLoader)
       .getMethod("main", classOf[Array[String]])
     val t = new Thread {
       override def run() {
-        var mainArgs : Array[String] = null
-        var startIndex : Int = 0
+        var mainArgs: Array[String] = null
+        var startIndex = 0
 
         // I am sure there is a better 'scala' way to do this .... but I am just trying to get things to work right now !
         if (args.userArgs.isEmpty || args.userArgs.get(0) != "yarn-standalone") {
@@ -154,7 +154,7 @@ class ApplicationMaster(args: ApplicationMasterArguments, conf : Configuration) 
     logInfo("Waiting for spark context initialization")
 
     try {
-      var sparkContext : SparkContext = null
+      var sparkContext: SparkContext = null
       ApplicationMaster.sparkContextRef.synchronized {
         var count = 0
         while (null == ApplicationMaster.sparkContextRef.get()) {
@@ -201,7 +201,7 @@ class ApplicationMaster(args: ApplicationMasterArguments, conf : Configuration) 
   }
 
   // TODO: We might want to extend this to allocate more containers in case they die !
-  private def launchReporterThread(_sleepTime: Long) : Thread = {
+  private def launchReporterThread(_sleepTime: Long): Thread = {
     val sleepTime = if (_sleepTime <= 0 ) 0 else _sleepTime
 
     val t = new Thread {
@@ -227,11 +227,11 @@ class ApplicationMaster(args: ApplicationMasterArguments, conf : Configuration) 
   private def sendProgress() {
     logDebug("Sending progress")
     // simulated with an allocate request with no nodes requested ...
-    yarnAllocator.allocateContainers(0);
+    yarnAllocator.allocateContainers(0)
   }
 
   /*
-  def printContainers(containers : List[Container]) = {
+  def printContainers(containers: List[Container]) = {
     for (container <- containers) {
       logInfo("Launching shell command on a new container."
         + ", containerId=" + container.getId()
@@ -263,7 +263,7 @@ object ApplicationMaster {
   // TODO: Currently, task to container is computed once (TaskSetManager) - which need not be optimal as more 
   // containers are available. Might need to handle this better.
   private val ALLOCATOR_LOOP_WAIT_COUNT = 30
-  def incrementAllocatorLoop(by : Int) {
+  def incrementAllocatorLoop(by: Int) {
     val count = yarnAllocatorLoop.getAndAdd(by)
     if (count >= ALLOCATOR_LOOP_WAIT_COUNT){
       yarnAllocatorLoop.synchronized {
@@ -273,17 +273,17 @@ object ApplicationMaster {
     }
   }
 
-  private val applicationMasters : CopyOnWriteArrayList[ApplicationMaster] = new CopyOnWriteArrayList[ApplicationMaster]()
+  private val applicationMasters = new CopyOnWriteArrayList[ApplicationMaster]()
 
-  def register(master : ApplicationMaster) {
+  def register(master: ApplicationMaster) {
     applicationMasters.add(master)
   }
 
   val sparkContextRef: AtomicReference[SparkContext] = new AtomicReference[SparkContext](null)
   val yarnAllocatorLoop: AtomicInteger = new AtomicInteger(0)
 
-  def sparkContextInitialized(sc: SparkContext) : Boolean = {
-    var modified : Boolean = false;
+  def sparkContextInitialized(sc: SparkContext): Boolean = {
+    var modified = false
     sparkContextRef.synchronized {
       modified = sparkContextRef.compareAndSet(null, sc)
       sparkContextRef.notifyAll()
@@ -297,10 +297,10 @@ object ApplicationMaster {
         // This is not just to log, but also to ensure that log system is initialized for this instance when we actually are 'run'
         logInfo("Adding shutdown hook for context " + sc)
         override def run() { 
-          logInfo("Invoking sc stop from shutdown hook"); 
+          logInfo("Invoking sc stop from shutdown hook") 
           sc.stop() 
           // best case ...
-          for (val master : ApplicationMaster <- applicationMasters) master.finishApplicationMaster
+          for (master <- applicationMasters) master.finishApplicationMaster
         } 
       } )
     }

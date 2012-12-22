@@ -107,7 +107,7 @@ private[spark] class TaskSetManager(
     addPendingTask(i)
   }
 
-  private def findPreferredLocations(taskPreferredLocations: Seq[String], scheduler: ClusterScheduler) : ArrayBuffer[String] = {
+  private def findPreferredLocations(taskPreferredLocations: Seq[String], scheduler: ClusterScheduler): ArrayBuffer[String] = {
     // DEBUG code
     taskPreferredLocations.foreach(h => Utils.checkHost(h, "taskPreferredLocation " + taskPreferredLocations))
 
@@ -122,7 +122,7 @@ private[spark] class TaskSetManager(
     retval
   }
 
-  private def findRackLocalPreferredLocations(taskPreferredLocations: Seq[String], scheduler: ClusterScheduler) : ArrayBuffer[String] = {
+  private def findRackLocalPreferredLocations(taskPreferredLocations: Seq[String], scheduler: ClusterScheduler): ArrayBuffer[String] = {
     // DEBUG code
     taskPreferredLocations.foreach(h => Utils.checkHost(h, "taskPreferredLocation " + taskPreferredLocations))
 
@@ -234,7 +234,7 @@ private[spark] class TaskSetManager(
   // attempt running on this host, in case the host is slow. In addition, if localOnly is set, the
   // task must have a preference for this host (or no preferred locations at all).
   def findSpeculativeTask(hostPort: String, localOnly: Boolean): Option[Int] = {
-    val host : String = Utils.parseHostPort(hostPort)._1;
+    val host = Utils.parseHostPort(hostPort)._1
 
     speculatableTasks.retain(index => !finished(index)) // Remove finished tasks from set
     val localTask = speculatableTasks.find {
@@ -293,7 +293,7 @@ private[spark] class TaskSetManager(
 
     if (locs.contains(hostPort) || locs.isEmpty) return true
 
-    val host : String = Utils.parseHostPort(hostPort)._1;
+    val host = Utils.parseHostPort(hostPort)._1
     locs.contains(host)
   }
 

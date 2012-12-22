@@ -19,7 +19,7 @@ private[spark] object ClosureCleaner extends Logging {
     // todo: Fixme - continuing with earlier behavior ...
     if (null == resourceStream) return new ClassReader(resourceStream)
 
-    val baos : ByteArrayOutputStream = new ByteArrayOutputStream(128)
+    val baos = new ByteArrayOutputStream(128)
     Utils.copyStream(resourceStream, baos, true)
     new ClassReader(new ByteArrayInputStream(baos.toByteArray))
   }

@@ -1,6 +1,6 @@
 package spark.deploy.yarn
 
-import java.net.{InetSocketAddress, URI};
+import java.net.{InetSocketAddress, URI}
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, FileSystem, Path}
 import org.apache.hadoop.net.NetUtils
@@ -19,8 +19,8 @@ class Client(conf: Configuration, args: ClientArguments) extends Logging {
   
   def this(args: ClientArguments) = this(new Configuration(), args)
   
-  var applicationsManager : ClientRMProtocol = null
-  var rpc : YarnRPC = YarnRPC.create(conf)
+  var applicationsManager: ClientRMProtocol = null
+  var rpc: YarnRPC = YarnRPC.create(conf)
   val yarnConf: YarnConfiguration = new YarnConfiguration(conf)
   
   def run() {
@@ -48,7 +48,7 @@ class Client(conf: Configuration, args: ClientArguments) extends Logging {
   
   
   def connectToASM() {
-    val rmAddress : InetSocketAddress = NetUtils.createSocketAddr(
+    val rmAddress: InetSocketAddress = NetUtils.createSocketAddr(
       yarnConf.get(YarnConfiguration.RM_ADDRESS, YarnConfiguration.DEFAULT_RM_ADDRESS)
     )
     logInfo("Connecting to ResourceManager at" + rmAddress)
@@ -63,7 +63,7 @@ class Client(conf: Configuration, args: ClientArguments) extends Logging {
 /*
     val clusterNodeReports: List[NodeReport] = getNodeReports
     logDebug("Got Cluster node info from ASM")
-    for (node : NodeReport <- clusterNodeReports) {
+    for (node <- clusterNodeReports) {
       logDebug("Got node report from ASM for, nodeId=" + node.getNodeId + ", nodeAddress=" + node.getHttpAddress +
         ", nodeRackName=" + node.getRackName + ", nodeNumContainers=" + node.getNumContainers + ", nodeHealthStatus=" + node.getNodeHealthStatus)
     }
@@ -97,7 +97,7 @@ class Client(conf: Configuration, args: ClientArguments) extends Logging {
     return applicationsManager.getQueueInfo(request).getQueueInfo
   }
 
-  def getNewApplication() : GetNewApplicationResponse = {
+  def getNewApplication(): GetNewApplicationResponse = {
     logInfo("Requesting new Application")
     val request = Records.newRecord(classOf[GetNewApplicationRequest])
     val response = applicationsManager.getNewApplication(request)
@@ -117,7 +117,7 @@ class Client(conf: Configuration, args: ClientArguments) extends Logging {
     }
   }
   
-  def createApplicationSubmissionContext(appId : ApplicationId) : ApplicationSubmissionContext = {
+  def createApplicationSubmissionContext(appId: ApplicationId): ApplicationSubmissionContext = {
     logInfo("Setting up application submission context for ASM")
     val appContext = Records.newRecord(classOf[ApplicationSubmissionContext])
     appContext.setApplicationId(appId)
@@ -125,8 +125,7 @@ class Client(conf: Configuration, args: ClientArguments) extends Logging {
     return appContext
   }
   
-  def prepareLocalResources(appId : ApplicationId, appName : String) 
-    : HashMap[String, LocalResource] = {
+  def prepareLocalResources(appId: ApplicationId, appName: String): HashMap[String, LocalResource] = {
     logInfo("Preparing Local resources")
     val locaResources = HashMap[String, LocalResource]()
     // Upload Spark and the application JAR to the remote file system
@@ -152,7 +151,7 @@ class Client(conf: Configuration, args: ClientArguments) extends Logging {
     return locaResources
   }
   
-  def setupLaunchEnv(localResources: HashMap[String, LocalResource]) : HashMap[String, String] = {
+  def setupLaunchEnv(localResources: HashMap[String, LocalResource]): HashMap[String, String] = {
     logInfo("Setting up the launch environment")
     val env = new HashMap[String, String]()
     Apps.addToEnvironment(env, Environment.USER.name, args.amUser)
@@ -178,17 +177,16 @@ class Client(conf: Configuration, args: ClientArguments) extends Logging {
   def userArgsToString(clientArgs: ClientArguments): String = {
     val prefix = " --args "
     val args = clientArgs.userArgs
-    val retval : StringBuilder = new StringBuilder()
-    for (arg : String <- args){
+    val retval = new StringBuilder()
+    for (arg <- args){
       retval.append(prefix).append(" '").append(arg).append("' ")
     }
 
     retval.toString
   }
 
-  def createContainerLaunchContext(
-      localResources: HashMap[String, LocalResource], 
-      env: HashMap[String, String]) : ContainerLaunchContext = {
+  def createContainerLaunchContext(localResources: HashMap[String, LocalResource],
+                                   env: HashMap[String, String]): ContainerLaunchContext = {
     logInfo("Setting up container launch context")
     val amContainer = Records.newRecord(classOf[ContainerLaunchContext])
     amContainer.setLocalResources(localResources)
@@ -232,7 +230,7 @@ class Client(conf: Configuration, args: ClientArguments) extends Logging {
     applicationsManager.submitApplication(appRequest)
   }
   
-  def monitorApplication(appId: ApplicationId) : Boolean = {  
+  def monitorApplication(appId: ApplicationId): Boolean = {  
     while(true) {
       Thread.sleep(1000)
       val reportRequest = Records.newRecord(classOf[GetApplicationReportRequest])
