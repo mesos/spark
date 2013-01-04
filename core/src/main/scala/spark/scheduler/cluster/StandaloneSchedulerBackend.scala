@@ -121,7 +121,7 @@ class StandaloneSchedulerBackend(scheduler: ClusterScheduler, actorSystem: Actor
     while (iterator.hasNext) {
       val entry = iterator.next
       val (key, value) = (entry.getKey.toString, entry.getValue.toString)
-      if (key.startsWith("spark.") && !key.startsWith("spark.hostname")) {
+      if (key.startsWith("spark.") && !key.equals("spark.hostPort")) {
         properties += ((key, value))
       }
     }

@@ -1,5 +1,6 @@
-package spark
+package spark.scheduler
 
+import spark.Logging
 import scala.collection.immutable.Set
 import org.apache.hadoop.mapred.{FileInputFormat, JobConf}
 import org.apache.hadoop.util.ReflectionUtils
@@ -7,65 +8,6 @@ import org.apache.hadoop.mapreduce.Job
 import org.apache.hadoop.conf.Configuration
 import scala.collection.mutable.{ArrayBuffer, HashMap, HashSet}
 import scala.collection.JavaConversions._
-
-
-// information about a specific split instance : handles both split instances.
-// So that we do not need to worry about the differences.
-class SplitInfo(val inputFormatClazz: Class[_], val hostLocation: String, val path: String, 
-                val length: Long, val underlyingSplit: Any) {
-  override def toString(): String = {
-    "SplitInfo " + super.toString + " .. inputFormatClazz " + inputFormatClazz + 
-      ", hostLocation : " + hostLocation + ", path : " + path + 
-      ", length : " + length + ", underlyingSplit " + underlyingSplit
-  }
-
-  override def hashCode(): Int = {
-    var hashCode = inputFormatClazz.hashCode
-    hashCode = hashCode * 31 + hostLocation.hashCode
-    hashCode = hashCode * 31 + path.hashCode
-    // ignore overflow ? It is hashcode anyway !
-    hashCode = hashCode * 31 + (length & 0x7fffffff).toInt
-    hashCode
-  }
-
-  // This is practically useless since most of the Split impl's dont seem to implement equals :-(
-  // So unless there is identity equality between underlyingSplits, it will always fail even if it 
-  // is pointing to same block.
-  override def equals(other: Any): Boolean = other match {
-    case that: SplitInfo => {
-      this.hostLocation == that.hostLocation && 
-        this.inputFormatClazz == that.inputFormatClazz &&
-        this.path == that.path &&
-        this.length == that.length &&
-        // other split specific checks (like start for FileSplit)
-        this.underlyingSplit == that.underlyingSplit
-    }
-    case _ => false
-  }
-}
-
-object SplitInfo {
-
-  def toSplitInfo(inputFormatClazz: Class[_], path: String, 
-                  mapredSplit: org.apache.hadoop.mapred.InputSplit): Seq[SplitInfo] = {
-    val retval = ArrayBuffer[SplitInfo]()
-    val length = mapredSplit.getLength
-    for (host <- mapredSplit.getLocations) {
-      retval += new SplitInfo(inputFormatClazz, host, path, length, mapredSplit)
-    }
-    retval
-  }
-
-  def toSplitInfo(inputFormatClazz: Class[_], path: String, 
-                  mapreduceSplit: org.apache.hadoop.mapreduce.InputSplit): Seq[SplitInfo] = {
-    val retval = ArrayBuffer[SplitInfo]()
-    val length = mapreduceSplit.getLength
-    for (host <- mapreduceSplit.getLocations) {
-      retval += new SplitInfo(inputFormatClazz, host, path, length, mapreduceSplit)
-    }
-    retval
-  }
-}
 
 
 /**
@@ -135,7 +77,7 @@ class InputFormatInfo(val configuration: Configuration, val inputFormatClazz: Cl
         org.apache.hadoop.mapreduce.InputFormat[_, _]]
     val job = new Job(conf)
 
-    val retval = ArrayBuffer[SplitInfo]()
+    val retval = new ArrayBuffer[SplitInfo]()
     val list = instance.getSplits(job)
     for (split <- list) {
       retval ++= SplitInfo.toSplitInfo(inputFormatClazz, path, split)
@@ -153,7 +95,7 @@ class InputFormatInfo(val configuration: Configuration, val inputFormatClazz: Cl
       ReflectionUtils.newInstance(inputFormatClazz.asInstanceOf[Class[_]], jobConf).asInstanceOf[
         org.apache.hadoop.mapred.InputFormat[_, _]]
 
-    val retval = ArrayBuffer[SplitInfo]()
+    val retval = new ArrayBuffer[SplitInfo]()
     instance.getSplits(jobConf, jobConf.getNumMapTasks()).foreach(
         elem => retval ++= SplitInfo.toSplitInfo(inputFormatClazz, path, elem)
     )
@@ -178,7 +120,7 @@ class InputFormatInfo(val configuration: Configuration, val inputFormatClazz: Cl
 
 
 object InputFormatInfo {
-  /*
+  /**
     Computes the preferred locations based on input(s) and returned a location to block map.
     Typical use of this method for allocation would follow some algo like this 
     (which is what we currently do in YARN branch) :

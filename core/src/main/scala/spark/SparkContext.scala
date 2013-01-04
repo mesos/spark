@@ -42,6 +42,7 @@ import spark.rdd.UnionRDD
 import spark.scheduler.ShuffleMapTask
 import spark.scheduler.DAGScheduler
 import spark.scheduler.TaskScheduler
+import spark.scheduler.SplitInfo
 import spark.scheduler.local.LocalScheduler
 import spark.scheduler.cluster.{StandaloneSchedulerBackend, SparkDeploySchedulerBackend, SchedulerBackend, ClusterScheduler, YarnClusterScheduler}
 import spark.scheduler.mesos.{CoarseMesosSchedulerBackend, MesosSchedulerBackend}

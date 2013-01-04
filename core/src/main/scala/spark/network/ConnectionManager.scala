@@ -198,24 +198,18 @@ private[spark] class ConnectionManager(port: Int) extends Logging {
       val remoteConnectionManagerId = receivingConnection.remoteConnectionManagerId
       logInfo("Removing ReceivingConnection to " + remoteConnectionManagerId)
 
-      // There must be a better way to phrase this in scala !
-      val sendingConnectionManagerId = connectionsById.keys.find(
-        _ match {
-          case k: ConnectionManagerId if k.host == remoteConnectionManagerId.host && k.port == remoteConnectionManagerId.port => true
-          case _ => false
-        } ).orNull
-      if (sendingConnectionManagerId == null) {
+      val sendingConnectionOpt = connectionsById.get(remoteConnectionManagerId)
+        if (! sendingConnectionOpt.isDefined) {
         logError("Corresponding SendingConnectionManagerId not found")
         return
       }
-      logInfo("Corresponding SendingConnectionManagerId is " + sendingConnectionManagerId)
-      
-      val sendingConnection = connectionsById(sendingConnectionManagerId)
+
+      val sendingConnection = sendingConnectionOpt.get
       sendingConnection.close()
-      connectionsById -= sendingConnectionManagerId
+      connectionsById -= remoteConnectionManagerId
       
       messageStatuses.synchronized {
-        for (s <- messageStatuses.values if s.connectionManagerId == sendingConnectionManagerId) {
+        for (s <- messageStatuses.values if s.connectionManagerId == remoteConnectionManagerId) {
           logInfo("Notifying " + s)
           s.synchronized {
             s.attempted = true
@@ -225,7 +219,7 @@ private[spark] class ConnectionManager(port: Int) extends Logging {
         }
 
         messageStatuses.retain((i, status) => { 
-          status.connectionManagerId != sendingConnectionManagerId 
+          status.connectionManagerId != remoteConnectionManagerId
         })
       }
     }

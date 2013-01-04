@@ -28,8 +28,9 @@ private[spark] class BlockManagerId(var host: String, var port: Int) extends Ext
   def hostPort: String = {
     // DEBUG code
     Utils.checkHost(host)
+    assert (port > 0)
 
-    if (port > 0) host + ":" + port else host
+    host + ":" + port
   }
 
   override def writeExternal(out: ObjectOutput) {

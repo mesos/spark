@@ -191,7 +191,7 @@ class ApplicationMaster(args: ApplicationMasterArguments, conf: Configuration) e
     if (userThread.isAlive){
       // ensure that progress is sent before YarnConfiguration.RM_AM_EXPIRY_INTERVAL_MS elapse.
 
-      val timeoutInterval = yarnConf.getInt(YarnConfiguration.RM_AM_EXPIRY_INTERVAL_MS, 120)
+      val timeoutInterval = yarnConf.getInt(YarnConfiguration.RM_AM_EXPIRY_INTERVAL_MS, 120000)
       // must be <= timeoutInterval/ 2.
       // On other hand, also ensure that we are reasonably responsive without causing too many requests to RM.
       // so atleast 1 minute or timeoutInterval / 10 - whichever is higher.

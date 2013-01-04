@@ -1,9 +1,10 @@
 package spark.deploy.yarn
 
-import spark.{Logging, SplitInfo, Utils}
+import spark.{Logging, Utils}
+import spark.scheduler.SplitInfo
 import scala.collection
 import org.apache.hadoop.yarn.api.records.{AMResponse, ApplicationAttemptId, ContainerId, Priority, Resource, ResourceRequest, ContainerStatus, Container}
-import spark.scheduler.cluster.StandaloneSchedulerBackend
+import spark.scheduler.cluster.{ClusterScheduler, StandaloneSchedulerBackend}
 import org.apache.hadoop.yarn.api.protocolrecords.{AllocateRequest, AllocateResponse}
 import org.apache.hadoop.yarn.util.{RackResolver, Records}
 import java.util.concurrent.{CopyOnWriteArrayList, ConcurrentHashMap}
@@ -166,9 +167,9 @@ private[yarn] class YarnAllocationHandler(val conf: Configuration, val resourceM
       // if there are sufficiently large number of hosts/containers.
 
       val allocatedContainers = new ArrayBuffer[Container](_allocatedContainers.size)
-      allocatedContainers ++= Utils.prioritizeContainers(dataLocalContainers)
-      allocatedContainers ++= Utils.prioritizeContainers(rackLocalContainers)
-      allocatedContainers ++= Utils.prioritizeContainers(offRackContainers)
+      allocatedContainers ++= ClusterScheduler.prioritizeContainers(dataLocalContainers)
+      allocatedContainers ++= ClusterScheduler.prioritizeContainers(rackLocalContainers)
+      allocatedContainers ++= ClusterScheduler.prioritizeContainers(offRackContainers)
 
       // Run each of the allocated containers
       for (container <- allocatedContainers) {

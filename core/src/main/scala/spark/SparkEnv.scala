@@ -78,13 +78,13 @@ object SparkEnv extends Logging {
     }
 
     // set only if unset until now.
-    if (null == System.getProperty("spark.hostname", null)) {
+    if (null == System.getProperty("spark.hostPort", null)) {
       if (!isMaster){
         // unexpected
-        Utils.logErrorWithStack("Unexpected NOT to have spark.hostname set")
+        Utils.logErrorWithStack("Unexpected NOT to have spark.hostPort set")
       }
       Utils.checkHost(hostname)
-      System.setProperty("spark.hostname", hostname + ":" + boundPort)
+      System.setProperty("spark.hostPort", hostname + ":" + boundPort)
     }
 
     val classLoader = Thread.currentThread.getContextClassLoader

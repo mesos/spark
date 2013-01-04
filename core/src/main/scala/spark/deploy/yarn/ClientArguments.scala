@@ -4,7 +4,7 @@ import spark.util.MemoryParam
 import spark.util.IntParam
 import collection.mutable.ArrayBuffer
 import scala.collection.mutable.Map
-import spark.InputFormatInfo
+import spark.scheduler.{InputFormatInfo, SplitInfo}
 
 // TODO: Add code and support for ensuring that yarn resource 'asks' are location aware !
 class ClientArguments(val args: Array[String]) {

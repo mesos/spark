@@ -30,10 +30,12 @@ private[spark] class Executor extends Logging {
 
   initLogging()
 
-  def initialize(slaveHostPort: String, properties: Seq[(String, String)]) {
-    val parsedSlaveHost = Utils.parseHostPort(slaveHostPort)._1
+  def initialize(slaveHostname: String, properties: Seq[(String, String)]) {
+    // must not have port specified.
+    assert (0 == Utils.parseHostPort(slaveHostname)._2)
+
     // Make sure the local hostname we report matches the cluster scheduler's name for this host
-    Utils.setCustomHostname(parsedSlaveHost)
+    Utils.setCustomHostname(slaveHostname)
 
     // Set spark.* system properties from executor arg
     for ((key, value) <- properties) {
@@ -45,7 +47,7 @@ private[spark] class Executor extends Logging {
     Thread.currentThread.setContextClassLoader(urlClassLoader)
 
     // Initialize Spark environment (using system properties read above)
-    env = SparkEnv.createFromSystemProperties(parsedSlaveHost, 0, false, false)
+    env = SparkEnv.createFromSystemProperties(slaveHostname, 0, false, false)
     SparkEnv.set(env)
 
     // Start worker thread pool

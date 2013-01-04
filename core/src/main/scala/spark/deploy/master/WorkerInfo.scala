@@ -21,7 +21,8 @@ private[spark] class WorkerInfo(
   def memoryFree: Int = memory - memoryUsed
 
   def hostPort: String = {
-    if (port > 0) host + ":" + port else host
+    assert (port > 0)
+    host + ":" + port
   }
 
   def addExecutor(exec: ExecutorInfo) {

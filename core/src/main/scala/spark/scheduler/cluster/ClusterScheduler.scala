@@ -161,9 +161,9 @@ private[spark] class ClusterScheduler(val sc: SparkContext)
         val offersPriorityList = new ArrayBuffer[Int](
           hostLocalOffers.size + rackLocalOffers.size + otherOffers.size)
         // First host local, then rack, then others
-        offersPriorityList ++= Utils.prioritizeContainers(hostLocalOffers)
-        offersPriorityList ++= Utils.prioritizeContainers(rackLocalOffers)
-        offersPriorityList ++= Utils.prioritizeContainers(otherOffers)
+        offersPriorityList ++= ClusterScheduler.prioritizeContainers(hostLocalOffers)
+        offersPriorityList ++= ClusterScheduler.prioritizeContainers(rackLocalOffers)
+        offersPriorityList ++= ClusterScheduler.prioritizeContainers(otherOffers)
 
         do {
           launchedTask = false
@@ -317,4 +317,57 @@ private[spark] class ClusterScheduler(val sc: SparkContext)
 
   // By default, rack is unknown
   def getRackForHost(value: String): Option[String] = None
+}
+
+
+
+object ClusterScheduler {
+
+  // Used to 'spray' available containers across the available set to ensure too many containers on same host
+  // are not used up. Used in yarn mode and in task scheduling (when there are multiple containers available
+  // to execute a task)
+  // For example: yarn can returns more containers than we would have requested under ANY, this method
+  // prioritizes how to use the allocated containers.
+  // flatten the map such that the array buffer entries are spread out across the returned value.
+  // given <host, list[container]> == <h1, [c1 .. c5]>, <h2, [c1 .. c3]>, <h3, [c1, c2]>, <h4, c1>, <h5, c1>, i
+  // the return value would be something like : h1c1, h2c1, h3c1, h4c1, h5c1, h1c2, h2c2, h3c2, h1c3, h2c3, h1c4, h1c5
+  // We then 'use' the containers in this order (consuming only the top K from this list where
+  // K = number to be user). This is to ensure that if we have multiple eligible allocations,
+  // they dont end up allocating all containers on a small number of hosts - increasing probability of
+  // multiple container failure when a host goes down.
+  // Note, there is bias for keys with higher number of entries in value to be picked first (by design)
+  // Also note that invocation of this method is expected to have containers of same 'type'
+  // (host-local, rack-local, off-rack) and not across types : so that reordering is simply better from
+  // the available list - everything else being same.
+  // That is, we we first consume data local, then rack local and finally off rack nodes. So the
+  // prioritization from this method applies to within each category
+  def prioritizeContainers[K, T] (map: HashMap[K, ArrayBuffer[T]]): List[T] = {
+    val _keyList = new ArrayBuffer[K](map.size)
+    _keyList ++= map.keys
+
+    // order keyList based on population of value in map
+    val keyList = _keyList.sortWith(
+      (left, right) => map.get(left).getOrElse(Set()).size > map.get(right).getOrElse(Set()).size
+    )
+
+    val retval = new ArrayBuffer[T](keyList.size * 2)
+    var index = 0
+    var found = true
+
+    while (found){
+      found = false
+      for (key <- keyList) {
+        val containerList: ArrayBuffer[T] = map.get(key).getOrElse(null)
+        assert(null != containerList)
+        // Get the index'th entry for this host - if present
+        if (index < containerList.size){
+          retval += containerList.apply(index)
+          found = true
+        }
+      }
+      index += 1
+    }
+
+    retval.toList
+  }
 }

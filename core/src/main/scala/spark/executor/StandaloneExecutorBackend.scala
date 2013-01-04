@@ -47,7 +47,7 @@ private[spark] class StandaloneExecutorBackend(
   override def receive = {
     case RegisteredSlave(sparkProperties) =>
       logInfo("Successfully registered with master")
-      executor.initialize(hostPort, sparkProperties)
+      executor.initialize(Utils.parseHostPort(hostPort)._1, sparkProperties)
 
     case RegisterSlaveFailed(message) =>
       logError("Slave registration failed: " + message)
@@ -78,7 +78,7 @@ private[spark] object StandaloneExecutorBackend {
     Utils.checkHost(hostname)
     // set it
     val sparkHostPort = hostname + ":" + boundPort
-    System.setProperty("spark.hostname", sparkHostPort)
+    System.setProperty("spark.hostPort", sparkHostPort)
     val actor = actorSystem.actorOf(
       Props(new StandaloneExecutorBackend(new Executor, masterUrl, slaveId, sparkHostPort, cores)),
       name = "Executor")
