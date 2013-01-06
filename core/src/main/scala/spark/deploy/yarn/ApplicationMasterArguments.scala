@@ -13,46 +13,49 @@ class ApplicationMasterArguments(val args: Array[String]) {
 
   parseArgs(args.toList)
   
-  def parseArgs(args: List[String]): Unit = {
-    val userArgsSeq = new ArrayBuffer[String]()
-    parseImpl(userArgsSeq, args)
-    userArgs = userArgsSeq.readOnly
-  }
+  private def parseArgs(inputArgs: List[String]): Unit = {
+    val userArgsBuffer = new ArrayBuffer[String]()
 
-  def parseImpl(userArgsSeq: ArrayBuffer[String], args: List[String]): Unit = {
-    args match {
-      case ("--jar") :: value :: tail =>
-        userJar = value
-        parseImpl(userArgsSeq, tail)
+    var args = inputArgs
 
-      case ("--class") :: value :: tail =>
-        userClass = value
-        parseImpl(userArgsSeq, tail)
+    while (! args.isEmpty) {
 
-      case ("--args") :: value :: tail =>
-        userArgsSeq += value
-        parseImpl(userArgsSeq, tail)
+      args match {
+        case ("--jar") :: value :: tail =>
+          userJar = value
+          args = tail
 
-      case ("--num-workers") :: IntParam(value) :: tail =>
-        numWorkers = value
-        parseImpl(userArgsSeq, tail)
+        case ("--class") :: value :: tail =>
+          userClass = value
+          args = tail
 
-      case ("--worker-memory") :: IntParam(value) :: tail =>
-        workerMemory = value
-        parseImpl(userArgsSeq, tail)
+        case ("--args") :: value :: tail =>
+          userArgsBuffer += value
+          args = tail
 
-      case ("--worker-cores") :: IntParam(value) :: tail =>
-        workerCores = value
-        parseImpl(userArgsSeq, tail)
+        case ("--num-workers") :: IntParam(value) :: tail =>
+          numWorkers = value
+          args = tail
 
-      case Nil =>
-        if (userJar == null || userClass == null) {
+        case ("--worker-memory") :: IntParam(value) :: tail =>
+          workerMemory = value
+          args = tail
+
+        case ("--worker-cores") :: IntParam(value) :: tail =>
+          workerCores = value
+          args = tail
+
+        case Nil =>
+          if (userJar == null || userClass == null) {
+            printUsageAndExit(1)
+          }
+
+        case _ =>
           printUsageAndExit(1)
-        }
-
-      case _ =>
-        printUsageAndExit(1)
+      }
     }
+
+    userArgs = userArgsBuffer.readOnly
   }
   
   def printUsageAndExit(exitCode: Int) {

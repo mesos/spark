@@ -2,8 +2,7 @@ package spark.deploy.yarn
 
 import spark.util.MemoryParam
 import spark.util.IntParam
-import collection.mutable.ArrayBuffer
-import scala.collection.mutable.Map
+import collection.mutable.{ArrayBuffer, HashMap}
 import spark.scheduler.{InputFormatInfo, SplitInfo}
 
 // TODO: Add code and support for ensuring that yarn resource 'asks' are location aware !
@@ -22,56 +21,59 @@ class ClientArguments(val args: Array[String]) {
 
   parseArgs(args.toList)
 
-  def parseArgs(args: List[String]): Unit = {
-    val userArgsSeq: ArrayBuffer[String] = new ArrayBuffer[String]()
-    val inputFormatMap: Map[String, InputFormatInfo] = Map[String, InputFormatInfo]()
-    parseImpl(userArgsSeq, inputFormatMap, args)
-    userArgs = userArgsSeq.readOnly
-    inputFormatInfo = inputFormatMap.values.toList
-  }
+  private def parseArgs(inputArgs: List[String]): Unit = {
+    val userArgsBuffer: ArrayBuffer[String] = new ArrayBuffer[String]()
+    val inputFormatMap: HashMap[String, InputFormatInfo] = new HashMap[String, InputFormatInfo]()
 
-  def parseImpl(userArgsSeq: ArrayBuffer[String], inputFormatMap: Map[String, InputFormatInfo], args: List[String]): Unit = {
-    args match {
-      case ("--jar") :: value :: tail =>
-        userJar = value
-        parseImpl(userArgsSeq, inputFormatMap, tail)
+    var args = inputArgs
 
-      case ("--class") :: value :: tail =>
-        userClass = value
-        parseImpl(userArgsSeq, inputFormatMap, tail)
+    while (! args.isEmpty) {
 
-      case ("--args") :: value :: tail =>
-        userArgsSeq += value
-        parseImpl(userArgsSeq, inputFormatMap, tail)
+      args match {
+        case ("--jar") :: value :: tail =>
+          userJar = value
+          args = tail
 
-      case ("--num-workers") :: IntParam(value) :: tail =>
-        numWorkers = value
-        parseImpl(userArgsSeq, inputFormatMap, tail)
+        case ("--class") :: value :: tail =>
+          userClass = value
+          args = tail
 
-      case ("--worker-memory") :: MemoryParam(value) :: tail =>
-        workerMemory = value
-        parseImpl(userArgsSeq, inputFormatMap, tail)
+        case ("--args") :: value :: tail =>
+          userArgsBuffer += value
+          args = tail
 
-      case ("--worker-cores") :: IntParam(value) :: tail =>
-        workerCores = value
-        parseImpl(userArgsSeq, inputFormatMap, tail)
+        case ("--num-workers") :: IntParam(value) :: tail =>
+          numWorkers = value
+          args = tail
 
-      case ("--user") :: value :: tail =>
-        amUser = value
-        parseImpl(userArgsSeq, inputFormatMap, tail)
+        case ("--worker-memory") :: MemoryParam(value) :: tail =>
+          workerMemory = value
+          args = tail
 
-      case ("--queue") :: value :: tail =>
-        amQueue = value
-        parseImpl(userArgsSeq, inputFormatMap, tail)
+        case ("--worker-cores") :: IntParam(value) :: tail =>
+          workerCores = value
+          args = tail
 
-      case Nil =>
-        if (userJar == null || userClass == null) {
+        case ("--user") :: value :: tail =>
+          amUser = value
+          args = tail
+
+        case ("--queue") :: value :: tail =>
+          amQueue = value
+          args = tail
+
+        case Nil =>
+          if (userJar == null || userClass == null) {
+            printUsageAndExit(1)
+          }
+
+        case _ =>
           printUsageAndExit(1)
-        }
-
-      case _ =>
-        printUsageAndExit(1)
+      }
     }
+
+    userArgs = userArgsBuffer.readOnly
+    inputFormatInfo = inputFormatMap.values.toList
   }
 
   
