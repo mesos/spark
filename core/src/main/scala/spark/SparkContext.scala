@@ -200,7 +200,7 @@ class SparkContext(
   }
   taskScheduler.start()
 
-  private var dagScheduler = new DAGScheduler(taskScheduler)
+  @volatile private var dagScheduler = new DAGScheduler(taskScheduler)
 
   taskScheduler.postStartHook()
 
@@ -478,17 +478,25 @@ class SparkContext(
 
   /** Shut down the SparkContext. */
   def stop() {
-    dagScheduler.stop()
+    // Do this only if not stopped already - best case effort.
+    // prevent NPE if stopped more than once.
+    val dagSchedulerCopy = dagScheduler
     dagScheduler = null
-    taskScheduler = null
-    // TODO: Cache.stop()?
-    env.stop()
-    // Clean up locally linked files
-    clearFiles()
-    clearJars()
-    SparkEnv.set(null)
-    ShuffleMapTask.clearCache()
-    logInfo("Successfully stopped SparkContext")
+    if (null != dagSchedulerCopy) {
+      dagSchedulerCopy.stop()
+      taskScheduler = null
+      // TODO: Cache.stop()?
+      env.stop()
+      // Clean up locally linked files
+      clearFiles()
+      clearJars()
+      SparkEnv.set(null)
+      ShuffleMapTask.clearCache()
+      logInfo("Successfully stopped SparkContext")
+    }
+    else {
+      logDebug("SparkContext already stopped, ignoring stop request")
+    }
   }
 
 
