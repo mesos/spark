@@ -18,7 +18,7 @@ case class RegisterSlaveFailed(message: String) extends StandaloneClusterMessage
 
 // Slaves to master
 private[spark]
-case class RegisterSlave(slaveId: String, host: String, cores: Int) extends StandaloneClusterMessage
+case class RegisterSlave(slaveId: String, hostPort: String, cores: Int) extends StandaloneClusterMessage
 
 private[spark]
 case class StatusUpdate(slaveId: String, taskId: Long, state: TaskState, data: SerializableBuffer)

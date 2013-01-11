@@ -11,7 +11,8 @@ import org.apache.hadoop.yarn.api.records._
 import org.apache.hadoop.yarn.api.protocolrecords._
 import org.apache.hadoop.yarn.conf.YarnConfiguration
 import org.apache.hadoop.yarn.ipc.YarnRPC
-import org.apache.hadoop.yarn.util.{ConverterUtils, Records}
+import org.apache.hadoop.yarn.util.{Apps, ConverterUtils, Records}
+import org.apache.hadoop.yarn.api.ApplicationConstants.Environment
 
 import scala.collection.JavaConversions._
 import scala.collection.mutable.HashMap
@@ -22,8 +23,9 @@ class WorkerRunnable(container: Container, conf: Configuration, masterAddress: S
     slaveId: String, hostname: String, workerMemory: Int, workerCores: Int) 
     extends Runnable with Logging {
   
-  var rpc : YarnRPC = YarnRPC.create(conf)
-  var cm : ContainerManager = null
+  var rpc: YarnRPC = YarnRPC.create(conf)
+  var cm: ContainerManager = null
+  val yarnConf: YarnConfiguration = new YarnConfiguration(conf)
   
   def run = {
     logInfo("Starting Worker Container")
@@ -102,18 +104,23 @@ class WorkerRunnable(container: Container, conf: Configuration, masterAddress: S
     return locaResources
   }
   
-  def prepareEnvironment : HashMap[String, String] = {
+  def prepareEnvironment: HashMap[String, String] = {
     val env = new HashMap[String, String]()
-    env("CLASSPATH") = "$CLASSPATH:./*:"
+    // should we add this ?
+    Apps.addToEnvironment(env, Environment.USER.name, Utils.getUserNameFromEnvironment())
+    Apps.addToEnvironment(env, Environment.CLASSPATH.name, "$CLASSPATH")
+    Apps.addToEnvironment(env, Environment.CLASSPATH.name, "./*")
+    Client.populateHadoopClasspath(yarnConf, env)
+
     System.getenv().filterKeys(_.startsWith("SPARK")).foreach { case (k,v) => env(k) = v }
     return env
   }
   
-  def connectToCM : ContainerManager = {
+  def connectToCM: ContainerManager = {
     val cmIpPortStr = container.getNodeId().getHost() + ":" + container.getNodeId().getPort()
     val cmAddress = NetUtils.createSocketAddr(cmIpPortStr)
     logInfo("Connecting to ContainerManager at " + cmIpPortStr)
     return rpc.getProxy(classOf[ContainerManager], cmAddress, conf).asInstanceOf[ContainerManager]
   }
   
-} 
+}

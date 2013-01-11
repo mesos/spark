@@ -4,9 +4,10 @@ import java.nio.ByteBuffer
 import spark.Logging
 import spark.TaskState.TaskState
 import spark.util.AkkaUtils
-import akka.actor.{ActorRef, Actor, Props}
+import akka.actor.{Terminated, ActorRef, Actor, Props}
 import java.util.concurrent.{TimeUnit, ThreadPoolExecutor, SynchronousQueue}
 import akka.remote.RemoteClientLifeCycleEvent
+import spark.Utils
 import spark.scheduler.cluster._
 import spark.scheduler.cluster.RegisteredSlave
 import spark.scheduler.cluster.LaunchTask
@@ -18,7 +19,7 @@ private[spark] class StandaloneExecutorBackend(
     executor: Executor,
     masterUrl: String,
     slaveId: String,
-    hostname: String,
+    hostPort: String,
     cores: Int)
   extends Actor
   with ExecutorBackend
@@ -33,7 +34,7 @@ private[spark] class StandaloneExecutorBackend(
     try {
       logInfo("Connecting to master: " + masterUrl)
       master = context.actorFor(masterUrl)
-      master ! RegisterSlave(slaveId, hostname, cores)
+      master ! RegisterSlave(slaveId, hostPort, cores)
       context.system.eventStream.subscribe(self, classOf[RemoteClientLifeCycleEvent])
       context.watch(master) // Doesn't work with remote actors, but useful for testing
     } catch {
@@ -46,7 +47,7 @@ private[spark] class StandaloneExecutorBackend(
   override def receive = {
     case RegisteredSlave(sparkProperties) =>
       logInfo("Successfully registered with master")
-      executor.initialize(hostname, sparkProperties)
+      executor.initialize(Utils.parseHostPort(hostPort)._1, sparkProperties)
 
     case RegisterSlaveFailed(message) =>
       logError("Slave registration failed: " + message)
@@ -55,6 +56,12 @@ private[spark] class StandaloneExecutorBackend(
     case LaunchTask(taskDesc) =>
       logInfo("Got assigned task " + taskDesc.taskId)
       executor.launchTask(this, taskDesc.taskId, taskDesc.serializedTask)
+
+    // Else we get a tonne of errors in the logs at shutdown
+    case Terminated(actorRef) =>
+      logError("Actor " + actorRef + " terminated")
+      // right ?
+      context.unwatch(actorRef)
   }
 
   override def statusUpdate(taskId: Long, state: TaskState, data: ByteBuffer) {
@@ -67,8 +74,13 @@ private[spark] object StandaloneExecutorBackend {
     // Create a new ActorSystem to run the backend, because we can't create a SparkEnv / Executor
     // before getting started with all our system properties, etc
     val (actorSystem, boundPort) = AkkaUtils.createActorSystem("sparkExecutor", hostname, 0)
+    // Debug code
+    Utils.checkHost(hostname)
+    // set it
+    val sparkHostPort = hostname + ":" + boundPort
+    System.setProperty("spark.hostPort", sparkHostPort)
     val actor = actorSystem.actorOf(
-      Props(new StandaloneExecutorBackend(new Executor, masterUrl, slaveId, hostname, cores)),
+      Props(new StandaloneExecutorBackend(new Executor, masterUrl, slaveId, sparkHostPort, cores)),
       name = "Executor")
     actorSystem.awaitTermination()
   }

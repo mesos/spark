@@ -20,27 +20,35 @@ import com.ning.compress.lzf.{LZFInputStream, LZFOutputStream}
 import sun.nio.ch.DirectBuffer
 
 
-private[spark] class BlockManagerId(var ip: String, var port: Int) extends Externalizable {
+private[spark] class BlockManagerId(var host: String, var port: Int) extends Externalizable {
   def this() = this(null, 0)  // For deserialization only
 
   def this(in: ObjectInput) = this(in.readUTF(), in.readInt())
 
+  def hostPort: String = {
+    // DEBUG code
+    Utils.checkHost(host)
+    assert (port > 0)
+
+    host + ":" + port
+  }
+
   override def writeExternal(out: ObjectOutput) {
-    out.writeUTF(ip)
+    out.writeUTF(host)
     out.writeInt(port)
   }
 
   override def readExternal(in: ObjectInput) {
-    ip = in.readUTF()
+    host = in.readUTF()
     port = in.readInt()
   }
 
-  override def toString = "BlockManagerId(" + ip + ", " + port + ")"
+  override def toString = "BlockManagerId(" + host + ", " + port + ")"
 
-  override def hashCode = ip.hashCode * 41 + port
+  override def hashCode = host.hashCode * 41 + port
 
   override def equals(that: Any) = that match {
-    case id: BlockManagerId => port == id.port && ip == id.ip
+    case id: BlockManagerId => port == id.port && host == id.host
     case _ => false
   }
 }
@@ -93,8 +101,9 @@ class BlockManager(val master: BlockManagerMaster, val serializer: Serializer, m
   private val blockInfo = new ConcurrentHashMap[String, BlockInfo]()
 
   private[storage] val memoryStore: BlockStore = new MemoryStore(this, maxMemory)
-  private[storage] val diskStore: BlockStore =
-    new DiskStore(this, System.getProperty("spark.local.dir", System.getProperty("java.io.tmpdir")))
+
+  private[storage] val diskStore: BlockStore = createDiskStore()
+
 
   val connectionManager = new ConnectionManager(0)
   implicit val futureExecContext = connectionManager.futureExecContext
@@ -115,7 +124,7 @@ class BlockManager(val master: BlockManagerMaster, val serializer: Serializer, m
   // Whether to compress RDD partitions that are stored serialized
   val compressRdds = System.getProperty("spark.rdd.compress", "false").toBoolean
 
-  val host = System.getProperty("spark.hostname", Utils.localHostName())
+  val hostPort = Utils.localHostPort()
 
   initialize()
 
@@ -180,7 +189,7 @@ class BlockManager(val master: BlockManagerMaster, val serializer: Serializer, m
   def getLocations(blockId: String): Seq[String] = {
     val startTimeMs = System.currentTimeMillis
     var managers = master.mustGetLocations(GetLocations(blockId))
-    val locations = managers.map(_.ip)
+    val locations = managers.map(_.hostPort)
     logDebug("Get block locations in " + Utils.getUsedTimeMs(startTimeMs))
     return locations
   }
@@ -191,7 +200,7 @@ class BlockManager(val master: BlockManagerMaster, val serializer: Serializer, m
   def getLocations(blockIds: Array[String]): Array[Seq[String]] = {
     val startTimeMs = System.currentTimeMillis
     val locations = master.mustGetLocationsMultipleBlockIds(
-      GetLocationsMultipleBlockIds(blockIds)).map(_.map(_.ip).toSeq).toArray
+      GetLocationsMultipleBlockIds(blockIds)).map(_.map(_.hostPort).toSeq).toArray
     logDebug("Get multiple block location in " + Utils.getUsedTimeMs(startTimeMs))
     return locations
   }
@@ -360,7 +369,7 @@ class BlockManager(val master: BlockManagerMaster, val serializer: Serializer, m
     for (loc <- locations) {
       logDebug("Getting remote block " + blockId + " from " + loc)
       val data = BlockManagerWorker.syncGetBlock(
-          GetBlock(blockId), ConnectionManagerId(loc.ip, loc.port))
+          GetBlock(blockId), ConnectionManagerId(loc.host, loc.port))
       if (data != null) {
         logDebug("Data is not null: " + data)
         return Some(dataDeserialize(blockId, data))
@@ -420,8 +429,8 @@ class BlockManager(val master: BlockManagerMaster, val serializer: Serializer, m
 
     def sendRequest(req: FetchRequest) {
       logDebug("Sending request for %d blocks (%s) from %s".format(
-        req.blocks.size, Utils.memoryBytesToString(req.size), req.address.ip))
-      val cmId = new ConnectionManagerId(req.address.ip, req.address.port)
+        req.blocks.size, Utils.memoryBytesToString(req.size), req.address.host))
+      val cmId = new ConnectionManagerId(req.address.host, req.address.port)
       val blockMessageArray = new BlockMessageArray(req.blocks.map {
         case (blockId, size) => BlockMessage.fromGetBlock(GetBlock(blockId))
       })
@@ -740,7 +749,7 @@ class BlockManager(val master: BlockManagerMaster, val serializer: Serializer, m
       logDebug("Try to replicate BlockId " + blockId + " once; The size of the data is "
         + data.limit() + " Bytes. To node: " + peer)
       if (!BlockManagerWorker.syncPutBlock(PutBlock(blockId, data, tLevel),
-        new ConnectionManagerId(peer.ip, peer.port))) {
+        new ConnectionManagerId(peer.host, peer.port))) {
         logError("Failed to call syncPutBlock to " + peer)
       }
       logDebug("Replicated BlockId " + blockId + " once used " +
@@ -755,7 +764,7 @@ class BlockManager(val master: BlockManagerMaster, val serializer: Serializer, m
       val rddInfo = key.split("_")
       val rddId: Int = rddInfo(1).toInt
       val partition: Int = rddInfo(2).toInt
-      cacheTracker.notifyFromBlockManager(spark.AddedToCache(rddId, partition, host))
+      cacheTracker.notifyFromBlockManager(spark.AddedToCache(rddId, partition, hostPort))
     }
   }
 
@@ -852,6 +861,23 @@ class BlockManager(val master: BlockManagerMaster, val serializer: Serializer, m
     memoryStore.clear()
     diskStore.clear()
     logInfo("BlockManager stopped")
+  }
+
+
+  // Do we actually need this ? I am still investigating !
+  def createDiskStore(): BlockStore = {
+    val localDir = System.getProperty("spark.local.dir", System.getProperty("java.io.tmpdir"));
+
+    // local directory specified as hdfs ?
+    if (localDir.startsWith("hdfs://")) {
+      // todo ?
+      println("Unsupported as of now ... " + localDir)
+    }
+    else {
+      // just diskstore ...
+    }
+
+    new DiskStore(this, System.getProperty("spark.local.dir", System.getProperty("java.io.tmpdir")))
   }
 }
 

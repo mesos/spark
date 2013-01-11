@@ -118,7 +118,7 @@ private[spark] class Worker(
     case LaunchExecutor(jobId, execId, jobDesc, cores_, memory_) =>
       logInfo("Asked to launch executor %s/%d for %s".format(jobId, execId, jobDesc.name))
       val manager = new ExecutorRunner(
-        jobId, execId, jobDesc, cores_, memory_, self, workerId, ip, sparkHome, workDir)
+        jobId, execId, jobDesc, cores_, memory_, self, workerId, ip + ":" + port, sparkHome, workDir)
       executors(jobId + "/" + execId) = manager
       manager.start()
       coresUsed += cores_

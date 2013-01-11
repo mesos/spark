@@ -64,9 +64,9 @@ private[spark] class SparkDeploySchedulerBackend(
     }
   }
 
-  def executorAdded(id: String, workerId: String, host: String, cores: Int, memory: Int) {
+  def executorAdded(id: String, workerId: String, hostPort: String, cores: Int, memory: Int) {
     logInfo("Granted executor ID %s on host %s with %d cores, %s RAM".format(
-       id, host, cores, Utils.memoryMegabytesToString(memory)))
+       id, hostPort, cores, Utils.memoryMegabytesToString(memory)))
   }
 
   def executorRemoved(id: String, message: String) {}

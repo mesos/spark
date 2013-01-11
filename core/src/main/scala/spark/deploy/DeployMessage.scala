@@ -48,7 +48,7 @@ private[spark]
 case class RegisteredJob(jobId: String) extends DeployMessage
 
 private[spark] 
-case class ExecutorAdded(id: Int, workerId: String, host: String, cores: Int, memory: Int)
+case class ExecutorAdded(id: Int, workerId: String, hostPort: String, cores: Int, memory: Int)
 
 private[spark]
 case class ExecutorUpdated(id: Int, state: ExecutorState, message: Option[String])

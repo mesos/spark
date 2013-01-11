@@ -19,6 +19,9 @@ import akka.util.Duration
 import akka.util.duration._
 
 private[spark] case class ConnectionManagerId(host: String, port: Int) {
+  // DEBUG code
+  Utils.checkHost(host)
+
   def toSocketAddress() = new InetSocketAddress(host, port)
 }
 
@@ -194,20 +197,19 @@ private[spark] class ConnectionManager(port: Int) extends Logging {
       val receivingConnection = connection.asInstanceOf[ReceivingConnection]
       val remoteConnectionManagerId = receivingConnection.remoteConnectionManagerId
       logInfo("Removing ReceivingConnection to " + remoteConnectionManagerId)
-      
-      val sendingConnectionManagerId = connectionsById.keys.find(_.host == remoteConnectionManagerId.host).orNull
-      if (sendingConnectionManagerId == null) {
+
+      val sendingConnectionOpt = connectionsById.get(remoteConnectionManagerId)
+        if (! sendingConnectionOpt.isDefined) {
         logError("Corresponding SendingConnectionManagerId not found")
         return
       }
-      logInfo("Corresponding SendingConnectionManagerId is " + sendingConnectionManagerId)
-      
-      val sendingConnection = connectionsById(sendingConnectionManagerId)
+
+      val sendingConnection = sendingConnectionOpt.get
       sendingConnection.close()
-      connectionsById -= sendingConnectionManagerId
+      connectionsById -= remoteConnectionManagerId
       
       messageStatuses.synchronized {
-        for (s <- messageStatuses.values if s.connectionManagerId == sendingConnectionManagerId) {
+        for (s <- messageStatuses.values if s.connectionManagerId == remoteConnectionManagerId) {
           logInfo("Notifying " + s)
           s.synchronized {
             s.attempted = true
@@ -217,7 +219,7 @@ private[spark] class ConnectionManager(port: Int) extends Logging {
         }
 
         messageStatuses.retain((i, status) => { 
-          status.connectionManagerId != sendingConnectionManagerId 
+          status.connectionManagerId != remoteConnectionManagerId
         })
       }
     }

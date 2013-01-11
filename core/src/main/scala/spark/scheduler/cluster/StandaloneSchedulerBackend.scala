@@ -26,7 +26,7 @@ class StandaloneSchedulerBackend(scheduler: ClusterScheduler, actorSystem: Actor
   class MasterActor(sparkProperties: Seq[(String, String)]) extends Actor {
     val slaveActor = new HashMap[String, ActorRef]
     val slaveAddress = new HashMap[String, Address]
-    val slaveHost = new HashMap[String, String]
+    val slaveHostPort = new HashMap[String, String]
     val freeCores = new HashMap[String, Int]
     val actorToSlaveId = new HashMap[ActorRef, String]
     val addressToSlaveId = new HashMap[Address, String]
@@ -37,7 +37,7 @@ class StandaloneSchedulerBackend(scheduler: ClusterScheduler, actorSystem: Actor
     }
 
     def receive = {
-      case RegisterSlave(slaveId, host, cores) =>
+      case RegisterSlave(slaveId, hostPort, cores) =>
         if (slaveActor.contains(slaveId)) {
           sender ! RegisterSlaveFailed("Duplicate slave ID: " + slaveId)
         } else {
@@ -45,7 +45,7 @@ class StandaloneSchedulerBackend(scheduler: ClusterScheduler, actorSystem: Actor
           sender ! RegisteredSlave(sparkProperties)
           context.watch(sender)
           slaveActor(slaveId) = sender
-          slaveHost(slaveId) = host
+          slaveHostPort(slaveId) = hostPort
           freeCores(slaveId) = cores
           slaveAddress(slaveId) = sender.path.address
           actorToSlaveId(sender) = slaveId
@@ -81,13 +81,13 @@ class StandaloneSchedulerBackend(scheduler: ClusterScheduler, actorSystem: Actor
     // Make fake resource offers on all slaves
     def makeOffers() {
       launchTasks(scheduler.resourceOffers(
-        slaveHost.toArray.map {case (id, host) => new WorkerOffer(id, host, freeCores(id))}))
+        slaveHostPort.toArray.map {case (id, hostPort) => new WorkerOffer(id, hostPort, freeCores(id))}))
     }
 
     // Make fake resource offers on just one slave
     def makeOffers(slaveId: String) {
       launchTasks(scheduler.resourceOffers(
-        Seq(new WorkerOffer(slaveId, slaveHost(slaveId), freeCores(slaveId)))))
+        Seq(new WorkerOffer(slaveId, slaveHostPort(slaveId), freeCores(slaveId)))))
     }
 
     // Launch tasks returned by a set of resource offers
@@ -105,9 +105,8 @@ class StandaloneSchedulerBackend(scheduler: ClusterScheduler, actorSystem: Actor
       actorToSlaveId -= slaveActor(slaveId)
       addressToSlaveId -= slaveAddress(slaveId)
       slaveActor -= slaveId
-      slaveHost -= slaveId
+      slaveHostPort -= slaveId
       freeCores -= slaveId
-      slaveHost -= slaveId
       totalCoreCount.addAndGet(-numCores)
       scheduler.slaveLost(slaveId)
     }
@@ -122,7 +121,7 @@ class StandaloneSchedulerBackend(scheduler: ClusterScheduler, actorSystem: Actor
     while (iterator.hasNext) {
       val entry = iterator.next
       val (key, value) = (entry.getKey.toString, entry.getValue.toString)
-      if (key.startsWith("spark.")) {
+      if (key.startsWith("spark.") && !key.equals("spark.hostPort")) {
         properties += ((key, value))
       }
     }
@@ -133,7 +132,8 @@ class StandaloneSchedulerBackend(scheduler: ClusterScheduler, actorSystem: Actor
   def stop() {
     try {
       if (masterActor != null) {
-        val timeout = 5.seconds
+        // Bumping the timeout to 10 from 5 .. helps when under load
+        val timeout = 10.seconds
         val future = masterActor.ask(StopMaster)(timeout)
         Await.result(future, timeout)
       }

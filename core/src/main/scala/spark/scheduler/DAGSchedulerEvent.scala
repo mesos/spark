@@ -28,7 +28,9 @@ private[spark] case class CompletionEvent(
     accumUpdates: Map[Long, Any])
   extends DAGSchedulerEvent
 
-private[spark] case class HostLost(host: String) extends DAGSchedulerEvent
+private[spark] case class HostGained(hostPort: String) extends DAGSchedulerEvent
+
+private[spark] case class HostLost(hostPort: String) extends DAGSchedulerEvent
 
 private[spark] case class TaskSetFailed(taskSet: TaskSet, reason: String) extends DAGSchedulerEvent
 

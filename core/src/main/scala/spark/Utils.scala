@@ -3,11 +3,13 @@ package spark
 import java.io._
 import java.net.{InetAddress, URL, URI}
 import java.util.{Locale, Random, UUID}
-import java.util.concurrent.{Executors, ThreadFactory, ThreadPoolExecutor}
+import java.util.concurrent.{ConcurrentHashMap, Executors, ThreadFactory, ThreadPoolExecutor}
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{Path, FileSystem, FileUtil}
 import scala.collection.mutable.ArrayBuffer
 import scala.io.Source
+import org.apache.hadoop.yarn.api.ApplicationConstants.Environment
+import scala.collection.mutable.{ArrayBuffer, HashMap}
 
 /**
  * Various utility methods used by Spark.
@@ -198,6 +200,7 @@ private object Utils extends Logging {
 
   /**
    * Get the local host's IP address in dotted-quad format (e.g. 1.2.3.4).
+   * Note, this is typically not used from within core spark.
    */
   def localIpAddress(): String = InetAddress.getLocalHost.getHostAddress
 
@@ -208,6 +211,8 @@ private object Utils extends Logging {
    * hostname it reports to the master.
    */
   def setCustomHostname(hostname: String) {
+    // DEBUG code
+    Utils.checkHost(hostname)
     customHostname = Some(hostname)
   }
 
@@ -217,6 +222,108 @@ private object Utils extends Logging {
   def localHostName(): String = {
     customHostname.getOrElse(InetAddress.getLocalHost.getHostName)
   }
+
+  def getAddressHostName(address: String): String = {
+    InetAddress.getByName(address).getHostName
+  }
+
+
+
+  def localHostPort(): String = {
+    val retval = System.getProperty("spark.hostPort", null)
+    if (null == retval) {
+      logErrorWithStack("spark.hostPort not set but invoking localHostPort")
+      return localHostName()
+    }
+
+    retval
+  }
+
+  // Used by DEBUG code : remove when all testing done
+  def checkHost(host: String, message: String = "") {
+    // Currently catches only ipv4 pattern, this is just a debugging tool - not rigourous !
+    if (host.matches("^[0-9]+(\\.[0-9]+)*$")) {
+      Utils.logErrorWithStack("Unexpected to have host " + host + " which matches IP pattern. Message " + message)
+    }
+    if (Utils.parseHostPort(host)._2 != 0){
+      Utils.logErrorWithStack("Unexpected to have host " + host + " which has port in it. Message " + message)
+    }
+  }
+
+  // Used by DEBUG code : remove when all testing done
+  def checkHostPort(hostPort: String, message: String = "") {
+    val (host, port) = Utils.parseHostPort(hostPort)
+    // Currently catches only ipv4 pattern, this is just a debugging tool - not rigourous !
+    if (host.matches("^[0-9]+(\\.[0-9]+)*$")) {
+      Utils.logErrorWithStack("Unexpected to have host " + host + " which matches IP pattern in " + hostPort + ". Message " + message)
+    }
+    if (port <= 0){
+      Utils.logErrorWithStack("Unexpected to have port " + port + " which is not valid in " + hostPort + ". Message " + message)
+    }
+  }
+
+  def getUserNameFromEnvironment(): String = {
+    // defaulting to env if -D is not present ...
+    System.getProperty(Environment.USER.name, System.getenv(Environment.USER.name))
+  }
+
+  // Used by DEBUG code : remove when all testing done
+  def logErrorWithStack(msg: String) {
+    try { throw new Exception } catch { case ex: Exception => { logError(msg, ex) } }
+  }
+
+  // Typically, this will be of order of number of nodes in cluster
+  // If not, we should change it to LRUCache or something.
+  private val hostPortParseResults = new ConcurrentHashMap[String, (String, Int)]()
+  def parseHostPort(hostPort: String): (String,  Int) = {
+    {
+      // Check cache first.
+      var cached = hostPortParseResults.get(hostPort)
+      if (null != cached) return cached
+    }
+
+    val indx: Int = hostPort.lastIndexOf(':')
+    // This is potentially broken - when dealing with ipv6 addresses for example, sigh ... but then hadoop does not support ipv6 right now.
+    // For now, we assume that if port exists, then it is valid - not check if it is an int > 0
+    if (-1 == indx) {
+      val retval = (hostPort, 0)
+      hostPortParseResults.put(hostPort, retval)
+      return retval
+    }
+
+    val retval = (hostPort.substring(0, indx).trim(), hostPort.substring(indx + 1).trim().toInt)
+    hostPortParseResults.put(hostPort, retval)
+    return retval
+  }
+
+  def addIfNoPort(hostPort: String,  port: Int): String = {
+    if (port <= 0) throw new IllegalArgumentException("Invalid port specified " + port)
+
+    // This is potentially broken - when dealing with ipv6 addresses for example, sigh ... but then hadoop does not support ipv6 right now.
+    // For now, we assume that if port exists, then it is valid - not check if it is an int > 0
+    val indx: Int = hostPort.lastIndexOf(':')
+    if (-1 != indx) return hostPort
+
+    hostPort + ":" + port
+  }
+
+  // Note that all params which start with SPARK are propagated all the way through, so if in yarn mode, this MUST be set to true.
+  def isYarnMode(): Boolean = {
+    val yarnMode = System.getProperty("SPARK_YARN_MODE", System.getenv("SPARK_YARN_MODE"))
+    java.lang.Boolean.valueOf(yarnMode)
+  }
+
+  // Set an env variable indicating we are running in YARN mode.
+  // Note that anything with SPARK prefix gets propagated to all (remote) processes
+  def setYarnMode() {
+    System.setProperty("SPARK_YARN_MODE", "true")
+  }
+
+  def setYarnMode(env: HashMap[String, String]) {
+    env("SPARK_YARN_MODE") = "true"
+  }
+
+
 
   /**
    * Returns a standard ThreadFactory except all threads are daemons.

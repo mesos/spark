@@ -42,10 +42,10 @@ import spark.rdd.UnionRDD
 import spark.scheduler.ShuffleMapTask
 import spark.scheduler.DAGScheduler
 import spark.scheduler.TaskScheduler
+import spark.scheduler.SplitInfo
 import spark.scheduler.local.LocalScheduler
-import spark.scheduler.cluster.{StandaloneSchedulerBackend, SparkDeploySchedulerBackend, SchedulerBackend, ClusterScheduler}
+import spark.scheduler.cluster.{StandaloneSchedulerBackend, SparkDeploySchedulerBackend, SchedulerBackend, ClusterScheduler, YarnClusterScheduler}
 import spark.scheduler.mesos.{CoarseMesosSchedulerBackend, MesosSchedulerBackend}
-import spark.storage.BlockManagerMaster
 
 /**
  * Main entry point for Spark functionality. A SparkContext represents the connection to a Spark
@@ -63,8 +63,12 @@ class SparkContext(
     jobName: String,
     val sparkHome: String,
     jars: Seq[String],
-    environment: Map[String, String])
+    environment: Map[String, String],
+    // This is used only by yarn for now, but should be relevant to other cluster types (mesos, etc) too.
+    // This is typically generated from InputFormatInfo.computePreferredLocations .. host, set of data-local splits on host
+    val preferredNodeLocationData: scala.collection.Map[String, scala.collection.Set[SplitInfo]] = scala.collection.immutable.Map())
   extends Logging {
+
 
   /**
    * @param master Cluster URL to connect to (e.g. mesos://host:port, spark://host:port, local[4]).
@@ -87,7 +91,12 @@ class SparkContext(
 
   // Set Spark master host and port system properties
   if (System.getProperty("spark.master.host") == null) {
-    System.setProperty("spark.master.host", Utils.localIpAddress())
+    // For YARN, set to hostname - this is only place where the code overlaps between various modes.
+    /*
+    if (Utils.isYarnMode()) System.setProperty("spark.master.host", Utils.localHostName())
+    else System.setProperty("spark.master.host", Utils.localIpAddress())
+    */
+    System.setProperty("spark.master.host", Utils.localHostName())
   }
   if (System.getProperty("spark.master.port") == null) {
     System.setProperty("spark.master.port", "0")
@@ -108,7 +117,7 @@ class SparkContext(
   private[spark] val addedJars = HashMap[String, Long]()
 
   // Add each JAR given through the constructor
-  jars.foreach { addJar(_) }
+  if (null != jars) jars.foreach { addJar(_) }
 
   // Environment variables to pass to our executors
   private[spark] val executorEnvs = HashMap[String, String]()
@@ -119,7 +128,7 @@ class SparkContext(
       executorEnvs(key) = value
     }
   }
-  executorEnvs ++= environment
+  if (null != environment) executorEnvs ++= environment
 
   // Create and start the scheduler
   private var taskScheduler: TaskScheduler = {
@@ -171,7 +180,7 @@ class SparkContext(
         scheduler
 
       case "yarn-standalone" =>
-        val scheduler = new ClusterScheduler(this)
+        val scheduler = new YarnClusterScheduler(this)
         val backend = new StandaloneSchedulerBackend(scheduler, this.env.actorSystem)
         scheduler.initialize(backend)
         scheduler
@@ -191,7 +200,9 @@ class SparkContext(
   }
   taskScheduler.start()
 
-  private var dagScheduler = new DAGScheduler(taskScheduler)
+  @volatile private var dagScheduler = new DAGScheduler(taskScheduler)
+
+  taskScheduler.postStartHook()
 
   // Methods for creating RDDs
 
@@ -467,18 +478,27 @@ class SparkContext(
 
   /** Shut down the SparkContext. */
   def stop() {
-    dagScheduler.stop()
+    // Do this only if not stopped already - best case effort.
+    // prevent NPE if stopped more than once.
+    val dagSchedulerCopy = dagScheduler
     dagScheduler = null
-    taskScheduler = null
-    // TODO: Cache.stop()?
-    env.stop()
-    // Clean up locally linked files
-    clearFiles()
-    clearJars()
-    SparkEnv.set(null)
-    ShuffleMapTask.clearCache()
-    logInfo("Successfully stopped SparkContext")
+    if (null != dagSchedulerCopy) {
+      dagSchedulerCopy.stop()
+      taskScheduler = null
+      // TODO: Cache.stop()?
+      env.stop()
+      // Clean up locally linked files
+      clearFiles()
+      clearJars()
+      SparkEnv.set(null)
+      ShuffleMapTask.clearCache()
+      logInfo("Successfully stopped SparkContext")
+    }
+    else {
+      logDebug("SparkContext already stopped, ignoring stop request")
+    }
   }
+
 
   /**
    * Get Spark's home location from either a value set through the constructor,

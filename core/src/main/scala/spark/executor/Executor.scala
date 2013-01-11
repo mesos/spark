@@ -31,6 +31,9 @@ private[spark] class Executor extends Logging {
   initLogging()
 
   def initialize(slaveHostname: String, properties: Seq[(String, String)]) {
+    // must not have port specified.
+    assert (0 == Utils.parseHostPort(slaveHostname)._2)
+
     // Make sure the local hostname we report matches the cluster scheduler's name for this host
     Utils.setCustomHostname(slaveHostname)
 

@@ -12,7 +12,7 @@ private[spark] trait ClientListener {
 
   def disconnected(): Unit
 
-  def executorAdded(id: String, workerId: String, host: String, cores: Int, memory: Int): Unit
+  def executorAdded(id: String, workerId: String, hostPort: String, cores: Int, memory: Int): Unit
 
   def executorRemoved(id: String, message: String): Unit
 }
