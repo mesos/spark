@@ -59,7 +59,7 @@ class WorkerRunnable(container: Container, conf: Configuration, masterAddress: S
     ctx.setUser(UserGroupInformation.getCurrentUser().getShortUserName())
     val commands = List[String]("java " +
       JAVA_OPTS + 
-      "spark.executor.StandaloneExecutorBackend " +
+      " spark.executor.StandaloneExecutorBackend " +
       masterAddress + " " +
       slaveId + " " +
       hostname + " " +
@@ -99,6 +99,19 @@ class WorkerRunnable(container: Container, conf: Configuration, masterAddress: S
     userJarResource.setTimestamp(System.getenv("SPARK_YARN_USERJAR_TIMESTAMP").toLong)
     userJarResource.setSize(System.getenv("SPARK_YARN_USERJAR_SIZE").toLong)
     locaResources("app.jar") = userJarResource
+
+    // Log4j conf - if available
+    if (null != System.getenv("SPARK_YARN_LOG4J_PATH")) {
+      val log4jConfResource = Records.newRecord(classOf[LocalResource]).asInstanceOf[LocalResource]
+      log4jConfResource.setType(LocalResourceType.FILE)
+      log4jConfResource.setVisibility(LocalResourceVisibility.APPLICATION)
+      log4jConfResource.setResource(ConverterUtils.getYarnUrlFromURI(
+        new URI(System.getenv("SPARK_YARN_LOG4J_PATH"))))
+      log4jConfResource.setTimestamp(System.getenv("SPARK_YARN_LOG4J_TIMESTAMP").toLong)
+      log4jConfResource.setSize(System.getenv("SPARK_YARN_LOG4J_SIZE").toLong)
+      locaResources("log4j.properties") = log4jConfResource
+    }
+
     
     logInfo("Prepared Local resources " + locaResources)
     return locaResources
@@ -108,6 +121,14 @@ class WorkerRunnable(container: Container, conf: Configuration, masterAddress: S
     val env = new HashMap[String, String]()
     // should we add this ?
     Apps.addToEnvironment(env, Environment.USER.name, Utils.getUserNameFromEnvironment())
+
+    // If log4j present, ensure ours overrides all others
+    if (null != System.getenv("SPARK_YARN_LOG4J_PATH")) {
+      // Which is correct ?
+      Apps.addToEnvironment(env, Environment.CLASSPATH.name, "./log4j.properties")
+      Apps.addToEnvironment(env, Environment.CLASSPATH.name, "./")
+    }
+
     Apps.addToEnvironment(env, Environment.CLASSPATH.name, "$CLASSPATH")
     Apps.addToEnvironment(env, Environment.CLASSPATH.name, "./*")
     Client.populateHadoopClasspath(yarnConf, env)
