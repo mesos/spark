@@ -35,6 +35,10 @@ private[spark] object AkkaUtils {
       akka.remote.netty.connection-timeout = 1s
       akka.remote.netty.execution-pool-size = %d
       akka.actor.default-dispatcher.throughput = %d
+
+      akka.remote.netty.message-frame-size = 100 MiB
+      akka.remote.log-remote-lifecycle-events = on
+
       """.format(host, port, akkaThreads, akkaBatchSize))
 
     val actorSystem = ActorSystem("spark", akkaConf, getClass.getClassLoader)
