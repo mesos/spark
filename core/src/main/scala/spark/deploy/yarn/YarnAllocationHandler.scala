@@ -57,7 +57,7 @@ private[yarn] class YarnAllocationHandler(val conf: Configuration, val resourceM
 
 
   def isResourceConstraintSatisfied(container: Container): Boolean = {
-    container.getResource.getMemory >= workerMemory
+    container.getResource.getMemory >= (workerMemory + YarnAllocationHandler.MEMORY_OVERHEAD)
   }
 
   def allocateContainers(workersToRequest: Int) {
@@ -177,7 +177,7 @@ private[yarn] class YarnAllocationHandler(val conf: Configuration, val resourceM
         val workerHostname = container.getNodeId.getHost
         val containerId = container.getId
 
-        assert (container.getResource.getMemory >= workerMemory)
+        assert (container.getResource.getMemory >= (workerMemory + YarnAllocationHandler.MEMORY_OVERHEAD))
 
         if (numWorkersRunningNow > maxWorkers) {
           logInfo("Ignoring container " + containerId + " at host " + workerHostname + 
@@ -361,7 +361,7 @@ private[yarn] class YarnAllocationHandler(val conf: Configuration, val resourceM
 
 
     if (numWorkers > 0) {
-      logInfo("Allocating " + numWorkers + " worker containers with " + workerMemory + " of memory each.")
+      logInfo("Allocating " + numWorkers + " worker containers with " + (workerMemory + YarnAllocationHandler.MEMORY_OVERHEAD) + " of memory each.")
     }
     else {
       logDebug("Empty allocation req ..  release : " + releasedContainerList)
@@ -411,7 +411,7 @@ private[yarn] class YarnAllocationHandler(val conf: Configuration, val resourceM
     val rsrcRequest = Records.newRecord(classOf[ResourceRequest])
     val memCapability = Records.newRecord(classOf[Resource])
     // There probably is some overhead here, let's reserve a bit more memory.
-    memCapability.setMemory(workerMemory)
+    memCapability.setMemory(workerMemory + YarnAllocationHandler.MEMORY_OVERHEAD)
     rsrcRequest.setCapability(memCapability)
 
     val pri = Records.newRecord(classOf[Priority])
@@ -449,8 +449,9 @@ object YarnAllocationHandler {
   // all requests are issued with same priority : we do not (yet) have any distinction between 
   // request types (like map/reduce in hadoop for example)
   val PRIORITY = 1
-  // Additional memory overhead
-  val MEMORY_OVERHEAD = 128
+
+  // Additional memory overhead - in mb
+  val MEMORY_OVERHEAD = 384
 
   // host to rack map - saved from allocation requests
   // We are expecting this not to change.
@@ -467,7 +468,7 @@ object YarnAllocationHandler {
 
 
     new YarnAllocationHandler(conf, resourceManager, appAttemptId, args.numWorkers, 
-      args.workerMemory + MEMORY_OVERHEAD, args.workerCores, hostToCount, rackToCount)
+      args.workerMemory, args.workerCores, hostToCount, rackToCount)
   }
 
   def newAllocator(conf: Configuration,
@@ -477,8 +478,8 @@ object YarnAllocationHandler {
 
     val (hostToCount, rackToCount) = generateNodeToWeight(conf, map)
 
-    new YarnAllocationHandler(conf, resourceManager, appAttemptId, maxWorkers, 
-      workerMemory + MEMORY_OVERHEAD, workerCores, hostToCount, rackToCount)
+    new YarnAllocationHandler(conf, resourceManager, appAttemptId, maxWorkers,
+      workerMemory, workerCores, hostToCount, rackToCount)
   }
 
   // A simple method to copy the split info map.
