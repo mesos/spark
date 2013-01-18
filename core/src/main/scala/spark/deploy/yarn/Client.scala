@@ -211,7 +211,7 @@ class Client(conf: Configuration, args: ClientArguments) extends Logging {
     amContainer.setEnvironment(env)
 
     var amMemory = java.lang.Math.max(args.amMemory,
-      newApp.getMaximumResourceCapability().getMemory() - YarnAllocationHandler.MEMORY_OVERHEAD)
+      newApp.getMinimumResourceCapability().getMemory() - YarnAllocationHandler.MEMORY_OVERHEAD)
     
     // Extra options for the JVM
     var JAVA_OPTS = ""
