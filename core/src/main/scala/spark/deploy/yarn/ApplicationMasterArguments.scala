@@ -51,14 +51,17 @@ class ApplicationMasterArguments(val args: Array[String]) {
           }
 
         case _ =>
-          printUsageAndExit(1)
+          printUsageAndExit(1, args)
       }
     }
 
     userArgs = userArgsBuffer.readOnly
   }
   
-  def printUsageAndExit(exitCode: Int) {
+  def printUsageAndExit(exitCode: Int, unknownParam: Any = null) {
+    if (null != unknownParam) {
+      System.err.println("Unknown/unsupported param " + unknownParam)
+    }
     System.err.println(
       "Usage: spark.deploy.yarn.ApplicationMaster [options] \n" +
       "Options:\n" +
@@ -72,5 +75,4 @@ class ApplicationMasterArguments(val args: Array[String]) {
       "  --worker-memory MEM  Memory per Worker (e.g. 1000M, 2G) (Default: 1G)\n")
     System.exit(exitCode)
   }
-  
 }
