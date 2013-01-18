@@ -49,7 +49,28 @@ class ApplicationMaster(args: ApplicationMasterArguments, conf: Configuration) e
 
     appAttemptId = getApplicationAttemptId()
     resourceManager = registerWithResourceManager()
-    registerApplicationMaster()
+    val appMasterResponse: RegisterApplicationMasterResponse = registerApplicationMaster()
+
+    // Compute number of threads for akka
+    val minimumMemory = appMasterResponse.getMinimumResourceCapability().getMemory()
+
+    if (minimumMemory > 0) {
+      val mem = args.workerMemory + YarnAllocationHandler.MEMORY_OVERHEAD
+      val numCore = (mem  / minimumMemory) + (if (0 != (mem % minimumMemory)) 1 else 0)
+
+      if (numCore > 0) {
+        // do not override - hits https://issues.apache.org/jira/browse/HADOOP-8406
+        // TODO: Uncomment when hadoop is on a version which has this fixed.
+        // args.workerCores = numCore
+      }
+    }
+
+    // Workaround until hadoop moves to something which has
+    // https://issues.apache.org/jira/browse/HADOOP-8406
+    // ignore result
+    // This does not, unfortunately, always work reliably ... but alleviates the bug a lot of times
+    // Hence args.workerCores = numCore disabled above. Any better option ?
+    // org.apache.hadoop.io.compress.CompressionCodecFactory.getCodecClasses(conf)
     
     ApplicationMaster.register(this)
     // Start the user's JAR
