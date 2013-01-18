@@ -155,7 +155,7 @@ class Client(conf: Configuration, args: ClientArguments) extends Logging {
   
   def setupLaunchEnv(localResources: HashMap[String, LocalResource]): HashMap[String, String] = {
     logInfo("Setting up the launch environment")
-    val log4jConfLocalRes = localResources("log4j.properties")
+    val log4jConfLocalRes = localResources.getOrElse("log4j.properties", null)
 
     val env = new HashMap[String, String]()
     Apps.addToEnvironment(env, Environment.USER.name, args.amUser)
