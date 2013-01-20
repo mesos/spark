@@ -68,7 +68,7 @@ class ClientArguments(val args: Array[String]) {
           }
 
         case _ =>
-          printUsageAndExit(1)
+          printUsageAndExit(1, args)
       }
     }
 
@@ -77,7 +77,10 @@ class ClientArguments(val args: Array[String]) {
   }
 
   
-  def printUsageAndExit(exitCode: Int) {
+  def printUsageAndExit(exitCode: Int, unknownParam: Any = null) {
+    if (null != unknownParam) {
+      System.err.println("Unknown/unsupported param " + unknownParam)
+    }
     System.err.println(
       "Usage: spark.deploy.yarn.Client [options] \n" +
       "Options:\n" +

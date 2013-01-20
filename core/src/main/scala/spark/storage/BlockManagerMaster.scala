@@ -361,7 +361,7 @@ private[spark] class BlockManagerMaster(actorSystem: ActorSystem, isMaster: Bool
     logInfo("Connecting to BlockManagerMaster: " + url)
     masterActor = actorSystem.actorFor(url)
   }
-  
+
   def stop() {
     if (masterActor != null) {
       communicate(StopBlockManagerMaster)

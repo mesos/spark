@@ -34,7 +34,7 @@ class Client(conf: Configuration, args: ClientArguments) extends Logging {
     val appContext = createApplicationSubmissionContext(appId)
     val localResources = prepareLocalResources(appId, "spark")
     val env = setupLaunchEnv(localResources)
-    val amContainer = createContainerLaunchContext(localResources, env)
+    val amContainer = createContainerLaunchContext(newApp, localResources, env)
 
     appContext.setQueue(args.amQueue)
     appContext.setAMContainerSpec(amContainer)
@@ -131,30 +131,38 @@ class Client(conf: Configuration, args: ClientArguments) extends Logging {
     // Upload Spark and the application JAR to the remote file system
     // Add them as local resources to the AM
     val fs = FileSystem.get(conf)
-    Map("spark.jar" -> System.getenv("SPARK_JAR"), "app.jar" -> args.userJar)
-    .foreach { case(destName, localPath) => 
-      val src = new Path(localPath)
-      val pathSuffix = appName + "/" + appId.getId() + destName
-      val dst = new Path(fs.getHomeDirectory(), pathSuffix)
-      logInfo("Uploading " + src + " to " + dst)
-      fs.copyFromLocalFile(false, true, src, dst)
-      val destStatus = fs.getFileStatus(dst)
-      
-      val amJarRsrc = Records.newRecord(classOf[LocalResource]).asInstanceOf[LocalResource]
-      amJarRsrc.setType(LocalResourceType.FILE)
-      amJarRsrc.setVisibility(LocalResourceVisibility.APPLICATION)
-      amJarRsrc.setResource(ConverterUtils.getYarnUrlFromPath(dst))
-      amJarRsrc.setTimestamp(destStatus.getModificationTime())
-      amJarRsrc.setSize(destStatus.getLen())
-      locaResources(destName) = amJarRsrc
+    Map("spark.jar" -> System.getenv("SPARK_JAR"), "app.jar" -> args.userJar, "log4j.properties" -> System.getenv("SPARK_LOG4J_CONF"))
+    .foreach { case(destName, localPath) =>
+      if (null != localPath) {
+        val src = new Path(localPath)
+        val pathSuffix = appName + "/" + appId.getId() + destName
+        val dst = new Path(fs.getHomeDirectory(), pathSuffix)
+        logInfo("Uploading " + src + " to " + dst)
+        fs.copyFromLocalFile(false, true, src, dst)
+        val destStatus = fs.getFileStatus(dst)
+
+        val amJarRsrc = Records.newRecord(classOf[LocalResource]).asInstanceOf[LocalResource]
+        amJarRsrc.setType(LocalResourceType.FILE)
+        amJarRsrc.setVisibility(LocalResourceVisibility.APPLICATION)
+        amJarRsrc.setResource(ConverterUtils.getYarnUrlFromPath(dst))
+        amJarRsrc.setTimestamp(destStatus.getModificationTime())
+        amJarRsrc.setSize(destStatus.getLen())
+        locaResources(destName) = amJarRsrc
+      }
     }
     return locaResources
   }
   
   def setupLaunchEnv(localResources: HashMap[String, LocalResource]): HashMap[String, String] = {
     logInfo("Setting up the launch environment")
+    val log4jConfLocalRes = localResources.getOrElse("log4j.properties", null)
+
     val env = new HashMap[String, String]()
     Apps.addToEnvironment(env, Environment.USER.name, args.amUser)
+
+    // If log4j present, ensure ours overrides all others
+    if (null != log4jConfLocalRes) Apps.addToEnvironment(env, Environment.CLASSPATH.name, "./")
+
     Apps.addToEnvironment(env, Environment.CLASSPATH.name, "$CLASSPATH")
     Apps.addToEnvironment(env, Environment.CLASSPATH.name, "./*")
     Client.populateHadoopClasspath(yarnConf, env)
@@ -164,11 +172,20 @@ class Client(conf: Configuration, args: ClientArguments) extends Logging {
       localResources("spark.jar").getResource().getFile().toString()
     env("SPARK_YARN_JAR_TIMESTAMP") =  localResources("spark.jar").getTimestamp().toString()
     env("SPARK_YARN_JAR_SIZE") =  localResources("spark.jar").getSize().toString()
-    env("SPARK_YARN_USERJAR_PATH") = 
+
+    env("SPARK_YARN_USERJAR_PATH") =
       localResources("app.jar").getResource().getScheme.toString() + "://" +
       localResources("app.jar").getResource().getFile().toString()
     env("SPARK_YARN_USERJAR_TIMESTAMP") =  localResources("app.jar").getTimestamp().toString()
     env("SPARK_YARN_USERJAR_SIZE") =  localResources("app.jar").getSize().toString()
+
+    if (null != log4jConfLocalRes) {
+      env("SPARK_YARN_LOG4J_PATH") =
+        log4jConfLocalRes.getResource().getScheme.toString() + "://" + log4jConfLocalRes.getResource().getFile().toString()
+      env("SPARK_YARN_LOG4J_TIMESTAMP") =  log4jConfLocalRes.getTimestamp().toString()
+      env("SPARK_YARN_LOG4J_SIZE") =  log4jConfLocalRes.getSize().toString()
+    }
+
     // Add each SPARK-* key to the environment
     System.getenv().filterKeys(_.startsWith("SPARK")).foreach { case (k,v) => env(k) = v }
     return env
@@ -185,28 +202,37 @@ class Client(conf: Configuration, args: ClientArguments) extends Logging {
     retval.toString
   }
 
-  def createContainerLaunchContext(localResources: HashMap[String, LocalResource],
+  def createContainerLaunchContext(newApp: GetNewApplicationResponse,
+                                   localResources: HashMap[String, LocalResource],
                                    env: HashMap[String, String]): ContainerLaunchContext = {
     logInfo("Setting up container launch context")
     val amContainer = Records.newRecord(classOf[ContainerLaunchContext])
     amContainer.setLocalResources(localResources)
     amContainer.setEnvironment(env)
+
+    var amMemory = java.lang.Math.max(args.amMemory,
+      newApp.getMinimumResourceCapability().getMemory() - YarnAllocationHandler.MEMORY_OVERHEAD)
     
     // Extra options for the JVM
     var JAVA_OPTS = ""
+
+    // Add Xmx for am memory
+    JAVA_OPTS += "-Xmx" + amMemory + "m "
+
     if (env.isDefinedAt("SPARK_JAVA_OPTS")) {
       JAVA_OPTS += env("SPARK_JAVA_OPTS") + " "
     }
-    
+
     // Command for the ApplicationMaster
-    val commands = List[String]("java spark.deploy.yarn.ApplicationMaster" +
+    val commands = List[String]("java " +
+      JAVA_OPTS +
+      " spark.deploy.yarn.ApplicationMaster" +
       " --class " + args.userClass + 
       " --jar " + args.userJar +
       userArgsToString(args) +
       " --worker-memory " + args.workerMemory +
       " --worker-cores " + args.workerCores +
       " --num-workers " + args.numWorkers +
-      JAVA_OPTS +
       " 1> " + ApplicationConstants.LOG_DIR_EXPANSION_VAR + "/stdout" +
       " 2> " + ApplicationConstants.LOG_DIR_EXPANSION_VAR + "/stderr")
     logInfo("Command for the ApplicationMaster: " + commands(0))
