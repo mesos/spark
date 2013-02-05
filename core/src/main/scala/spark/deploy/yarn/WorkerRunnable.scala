@@ -55,10 +55,11 @@ class WorkerRunnable(container: Container, conf: Configuration, masterAddress: S
     if (env.isDefinedAt("SPARK_JAVA_OPTS")) {
       JAVA_OPTS += env("SPARK_JAVA_OPTS") + " "
     }
-    
+
     ctx.setUser(UserGroupInformation.getCurrentUser().getShortUserName())
     val commands = List[String]("java " +
-      JAVA_OPTS + 
+      " -server " +
+      JAVA_OPTS +
       " spark.executor.StandaloneExecutorBackend " +
       masterAddress + " " +
       slaveId + " " +

@@ -110,7 +110,7 @@ class Client(conf: Configuration, args: ClientArguments) extends Logging {
     logInfo("Max mem capabililty of resources in this cluster " + maxMem)
     
     // If the cluster does not have enough memory resources, exit.
-    val requestedMem = args.amMemory + args.numWorkers * args.workerMemory
+    val requestedMem = (args.amMemory + YarnAllocationHandler.MEMORY_OVERHEAD) + args.numWorkers * args.workerMemory
     if (requestedMem > maxMem) {
       logError("Cluster cannot satisfy memory resource request of " + requestedMem)
       System.exit(1)
@@ -210,9 +210,11 @@ class Client(conf: Configuration, args: ClientArguments) extends Logging {
     amContainer.setLocalResources(localResources)
     amContainer.setEnvironment(env)
 
-    var amMemory = java.lang.Math.max(args.amMemory,
-      newApp.getMinimumResourceCapability().getMemory() - YarnAllocationHandler.MEMORY_OVERHEAD)
-    
+    val minResMemory: Int = newApp.getMinimumResourceCapability().getMemory()
+
+    var amMemory = ((args.amMemory / minResMemory) * minResMemory) +
+        (if (0 != (args.amMemory % minResMemory)) minResMemory else 0) - YarnAllocationHandler.MEMORY_OVERHEAD
+
     // Extra options for the JVM
     var JAVA_OPTS = ""
 
@@ -225,6 +227,7 @@ class Client(conf: Configuration, args: ClientArguments) extends Logging {
 
     // Command for the ApplicationMaster
     val commands = List[String]("java " +
+      " -server " +
       JAVA_OPTS +
       " spark.deploy.yarn.ApplicationMaster" +
       " --class " + args.userClass + 
@@ -240,7 +243,7 @@ class Client(conf: Configuration, args: ClientArguments) extends Logging {
     
     val capability = Records.newRecord(classOf[Resource]).asInstanceOf[Resource]
     // Memory for the ApplicationMaster
-    capability.setMemory(args.amMemory)
+    capability.setMemory(args.amMemory + YarnAllocationHandler.MEMORY_OVERHEAD)
     amContainer.setResource(capability)
     
     return amContainer
