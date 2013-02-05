@@ -13,6 +13,10 @@ import spark.scheduler.cluster.RegisteredSlave
 import spark.scheduler.cluster.LaunchTask
 import spark.scheduler.cluster.RegisterSlaveFailed
 import spark.scheduler.cluster.RegisterSlave
+import org.apache.hadoop.security.UserGroupInformation
+import java.security.PrivilegedExceptionAction
+import org.apache.hadoop.yarn.conf.YarnConfiguration
+import org.apache.hadoop.conf.Configuration
 
 
 private[spark] class StandaloneExecutorBackend(
@@ -71,6 +75,25 @@ private[spark] class StandaloneExecutorBackend(
 
 private[spark] object StandaloneExecutorBackend {
   def run(masterUrl: String, slaveId: String, hostname: String, cores: Int) {
+    if (Utils.isYarnMode()) {
+      val jobUserName = Utils.getUserNameFromEnvironment()
+      println("yarn mode, running as user " + jobUserName)
+      val yarnConf: YarnConfiguration = new YarnConfiguration(new Configuration())
+      UserGroupInformation.setConfiguration(yarnConf)
+      val appMasterUgi: UserGroupInformation = UserGroupInformation.createRemoteUser(jobUserName)
+      appMasterUgi.doAs(new PrivilegedExceptionAction[AnyRef] {
+        def run: AnyRef = {
+          runImpl(masterUrl, slaveId, hostname, cores)
+          return null
+        }
+      })
+    }
+    else {
+      runImpl(masterUrl, slaveId, hostname, cores)
+    }
+  }
+
+  private def runImpl(masterUrl: String, slaveId: String, hostname: String, cores: Int) {
     // Create a new ActorSystem to run the backend, because we can't create a SparkEnv / Executor
     // before getting started with all our system properties, etc
     val (actorSystem, boundPort) = AkkaUtils.createActorSystem("sparkExecutor", hostname, 0)
