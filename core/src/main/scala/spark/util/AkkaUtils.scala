@@ -11,7 +11,7 @@ import cc.spray.{SprayCanRootService, HttpService}
 import cc.spray.can.server.HttpServer
 import cc.spray.io.pipelines.MessageHandlerDispatch.SingletonHandler
 import akka.dispatch.Await
-import spark.SparkException
+import spark.{Utils, SparkException}
 import java.util.concurrent.TimeoutException
 
 /**
@@ -27,6 +27,9 @@ private[spark] object AkkaUtils {
     val akkaBatchSize = System.getProperty("spark.akka.batchSize", "15").toInt
     val akkaTimeout = System.getProperty("spark.akka.timeout", "20").toInt
     val akkaFrameSize = System.getProperty("spark.akka.frameSize", "10").toInt
+    // 10 seconds is the default akka timeout, but in a cluster, we need higher by default.
+    val akkaWriteTimeout = System.getProperty("spark.akka.writeTimeout", if (Utils.isYarnMode()) "30" else "10").toInt
+
     val akkaConf = ConfigFactory.parseString("""
       akka.daemonic = on
       akka.event-handlers = ["akka.event.slf4j.Slf4jEventHandler"]
@@ -40,8 +43,9 @@ private[spark] object AkkaUtils {
       akka.actor.default-dispatcher.throughput = %d
 
       akka.remote.log-remote-lifecycle-events = on
+      akka.remote.netty.write-timeout = %ds
 
-      """.format(host, port, akkaTimeout, akkaFrameSize, akkaThreads, akkaBatchSize))
+      """.format(host, port, akkaTimeout, akkaFrameSize, akkaThreads, akkaBatchSize, akkaWriteTimeout))
 
     val actorSystem = ActorSystem("spark", akkaConf, getClass.getClassLoader)
 
