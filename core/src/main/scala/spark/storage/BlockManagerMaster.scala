@@ -137,7 +137,8 @@ private[spark] class BlockManagerMasterActor(val isLocal: Boolean) extends Actor
         val originalLevel: StorageLevel = blocks.get(blockId)
         blocks.remove(blockId)
         if (originalLevel.useMemory) {
-          remainingMem += memSize
+          // already done above.
+          // remainingMem += memSize
           logInfo("Removed %s on %s:%d in memory (size: %s, free: %s)".format(
             blockId, blockManagerId.host, blockManagerId.port, Utils.memoryBytesToString(memSize),
             Utils.memoryBytesToString(remainingMem)))

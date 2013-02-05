@@ -159,6 +159,10 @@ class BlockManager(val master: BlockManagerMaster, val serializer: Serializer, m
    * For example, a block with MEMORY_AND_DISK set might have fallen out to be only on disk.
    */
   def reportBlockStatus(blockId: String) {
+    reportBlockStatus(blockId, 0L)
+  }
+
+  private def reportBlockStatus(blockId: String, removedMemorySize: Long) {
     locker.getLock(blockId).synchronized {
       val curLevel = blockInfo.get(blockId) match {
         case null =>
@@ -173,11 +177,12 @@ class BlockManager(val master: BlockManagerMaster, val serializer: Serializer, m
               new StorageLevel(onDisk, inMem, level.deserialized, level.replication)
           }
       }
+
       master.mustHeartBeat(HeartBeat(
         blockManagerId,
         blockId,
         curLevel,
-        if (curLevel.useMemory) memoryStore.getSize(blockId) else 0L,
+        if (curLevel.useMemory) memoryStore.getSize(blockId) else removedMemorySize,
         if (curLevel.useDisk) diskStore.getSize(blockId) else 0L))
       logDebug("Told master about block " + blockId)
     }
@@ -800,9 +805,11 @@ class BlockManager(val master: BlockManagerMaster, val serializer: Serializer, m
             diskStore.putBytes(blockId, bytes, level)
         }
       }
+      // Memory which is now 'freed' due to dropping block from memory
+      val memorySize: Long = if (memoryStore.contains(blockId)) memoryStore.getSize(blockId) else 0L
       memoryStore.remove(blockId)
       if (info.tellMaster) {
-        reportBlockStatus(blockId)
+        reportBlockStatus(blockId, memorySize)
       }
       if (!level.useDisk) {
         // The block is completely gone from this node; forget it so we can put() it again later.
