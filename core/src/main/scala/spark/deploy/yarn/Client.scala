@@ -132,8 +132,9 @@ class Client(conf: Configuration, args: ClientArguments) extends Logging {
     // Add them as local resources to the AM
     val fs = FileSystem.get(conf)
     Map("spark.jar" -> System.getenv("SPARK_JAR"), "app.jar" -> args.userJar, "log4j.properties" -> System.getenv("SPARK_LOG4J_CONF"))
-    .foreach { case(destName, localPath) =>
-      if (null != localPath) {
+    .foreach { case(destName, _localPath) =>
+      val localPath: String = if (null != _localPath) _localPath.trim() else ""
+      if (! localPath.isEmpty()) {
         val src = new Path(localPath)
         val pathSuffix = appName + "/" + appId.getId() + destName
         val dst = new Path(fs.getHomeDirectory(), pathSuffix)
@@ -224,6 +225,21 @@ class Client(conf: Configuration, args: ClientArguments) extends Logging {
     if (env.isDefinedAt("SPARK_JAVA_OPTS")) {
       JAVA_OPTS += env("SPARK_JAVA_OPTS") + " "
     }
+    // Commenting it out for now - so that people can refer to the properties if required. Remove it once cpuset version is pushed out.
+    // The context is, default gc for server class machines end up using all cores to do gc - hence if there are multiple containers in same
+    // node, spark gc effects all other containers performance (which can also be other spark containers)
+    // Instead of using this, rely on cpusets by YARN to enforce spark behaves 'properly' in multi-tenant environments. Not sure how default java gc behaves if it is
+    // limited to subset of cores on a node.
+/*
+    else {
+      // In our expts, using (default) throughput collector has severe perf ramnifications in multi-tenant machines
+      JAVA_OPTS += " -XX:+UseConcMarkSweepGC "
+      JAVA_OPTS += " -XX:+CMSIncrementalMode "
+      JAVA_OPTS += " -XX:+CMSIncrementalPacing "
+      JAVA_OPTS += " -XX:CMSIncrementalDutyCycleMin=0 "
+      JAVA_OPTS += " -XX:CMSIncrementalDutyCycle=10 "
+    }
+*/
 
     // Command for the ApplicationMaster
     val commands = List[String]("java " +
