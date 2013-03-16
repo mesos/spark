@@ -5,8 +5,6 @@ import akka.dispatch._
 import akka.pattern.ask
 import akka.remote._
 import akka.util.Duration
-import akka.util.Timeout
-import akka.util.duration._
 
 import scala.collection.mutable.ArrayBuffer
 import scala.collection.mutable.HashMap
@@ -100,7 +98,7 @@ private[spark] class CacheTracker(actorSystem: ActorSystem, isMaster: Boolean, b
   val port: Int = System.getProperty("spark.master.port", "7077").toInt
   val actorName: String = "CacheTracker"
 
-  val timeout = 10.seconds
+  val timeout = Duration.create(System.getProperty("spark.akka.askTimeout", "10").toLong, "seconds")
   
   var trackerActor: ActorRef = if (isMaster) {
     val actor = actorSystem.actorOf(Props[CacheTrackerActor], name = actorName)
@@ -211,8 +209,9 @@ private[spark] class CacheTracker(actorSystem: ActorSystem, isMaster: Boolean, b
         // TODO: also register a listener for when it unloads
         logInfo("Computing partition " + split)
         val elements = new ArrayBuffer[Any]
-        elements ++= rdd.compute(split)
         try {
+          // compute can throw exceptions - ensure that lock is released if that happens.
+          elements ++= rdd.compute(split)
           // Try to put this block in the blockManager
           blockManager.put(key, elements, storageLevel, true)
           //future.apply() // Wait for the reply from the cache tracker
