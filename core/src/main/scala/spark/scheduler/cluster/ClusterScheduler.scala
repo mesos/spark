@@ -43,6 +43,8 @@ private[spark] class ClusterScheduler(val sc: SparkContext)
    - HOST_LOCAL (default, no change w.r.t current behavior),
    - RACK_LOCAL and
    - ANY
+
+   Note that this property makes more sense when used in conjugation with spark.tasks.revive.interval > 0 : else it is not very effective.
     */
   val TASK_SCHEDULING_AGGRESSION = TaskLocality.parse(System.getProperty("spark.tasks.schedule.aggression", "HOST_LOCAL"))
 
@@ -195,8 +197,9 @@ private[spark] class ClusterScheduler(val sc: SparkContext)
             for (j <- 0 until numHostLocalTasks) list += i
           }
 
-          val numRackLocalTasks =  math.max(0, 
-            math.min(manager.numPendingTasksForHost(hostPort) - numHostLocalTasks, availableCpus(i)))
+          val numRackLocalTasks =  math.max(0,
+            // Remove host local tasks (which are also rack local btw !) from this
+            math.min(manager.numRackLocalPendingTasksForHost(hostPort) - numHostLocalTasks, availableCpus(i)))
           if (numRackLocalTasks > 0){
             val list = rackLocalOffers.getOrElseUpdate(host, new ArrayBuffer[Int])
             for (j <- 0 until numRackLocalTasks) list += i

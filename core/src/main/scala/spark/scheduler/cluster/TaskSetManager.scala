@@ -174,38 +174,21 @@ private[spark] class TaskSetManager(
     retval
   }
 
-  private def findRackLocalPreferredLocations(taskPreferredLocations: Seq[String], scheduler: ClusterScheduler): ArrayBuffer[String] = {
-    // DEBUG code
-    taskPreferredLocations.foreach(h => Utils.checkHost(h, "taskPreferredLocation " + taskPreferredLocations))
-
-    val preferredRacks = new HashSet[String]()
-    for (preferredHost <- taskPreferredLocations) {
-      val rack = sched.getRackForHost(preferredHost)
-      if (None != rack) preferredRacks += rack.get
-    }
-
-    val retval = new ArrayBuffer[String]
-
-    if (! preferredRacks.isEmpty) {
-      for (aliveHostPort <- scheduler.hostPortsAlive) {
-        val rack = scheduler.getRackForHost(aliveHostPort)
-        if (None != rack){
-          if (preferredRacks.contains(rack.get)) {
-            retval += aliveHostPort
-          }
-        }
-      }
-    }
-    retval
-  }
-
   // Add a task to all the pending-task lists that it should be on.
   private def addPendingTask(index: Int) {
-    val locations = findPreferredLocations(tasks(index).preferredLocations, sched)
-    if (locations.size == 0) {
+    // We can infer hostLocalLocations from rackLocalLocations by joining it against tasks(index).preferredLocations (with appropriate
+    // hostPort <-> host conversion). But not doing it for simplicity sake. If this becomes a performance issue, modify it.
+    val hostLocalLocations = findPreferredLocations(tasks(index).preferredLocations, sched)
+    val rackLocalLocations = findPreferredLocations(tasks(index).preferredLocations, sched, true)
+
+    if (rackLocalLocations.size == 0) {
+      // Current impl ensures this.
+      assert (hostLocalLocations.size == 0)
       pendingTasksWithNoPrefs += index
     } else {
-      for (hostPort <- locations) {
+
+      // host locality
+      for (hostPort <- hostLocalLocations) {
         // DEBUG Code
         Utils.checkHostPort(hostPort)
 
@@ -216,11 +199,8 @@ private[spark] class TaskSetManager(
         val hostList = pendingTasksForHost.getOrElseUpdate(host, ArrayBuffer())
         hostList += index
       }
-    }
 
-    // rack locality
-    val rackLocalLocations = findRackLocalPreferredLocations(tasks(index).preferredLocations, sched)
-    if (! locations.isEmpty && ! rackLocalLocations.isEmpty) {
+      // rack locality
       for (rackLocalHostPort <- rackLocalLocations) {
         // DEBUG Code
         Utils.checkHostPort(rackLocalHostPort)
@@ -286,11 +266,10 @@ private[spark] class TaskSetManager(
   // attempt running on this host, in case the host is slow. In addition, if locality is set, the
   // task must have a preference for this host/rack/no preferred locations at all.
   private def findSpeculativeTask(hostPort: String, locality: TaskLocality.TaskLocality): Option[Int] = {
-    val host = Utils.parseHostPort(hostPort)._1
 
     assert (TaskLocality.isAllowed(locality, TaskLocality.HOST_LOCAL))
-
     speculatableTasks.retain(index => !finished(index)) // Remove finished tasks from set
+
     if (speculatableTasks.size > 0) {
       val localTask = speculatableTasks.find {
           index =>
@@ -310,7 +289,7 @@ private[spark] class TaskSetManager(
           index =>
             val locations = findPreferredLocations(tasks(index).preferredLocations, sched, true)
             val attemptLocs = taskAttempts(index).map(_.hostPort)
-            locations.contains(hostPort)
+            locations.contains(hostPort) && !attemptLocs.contains(hostPort)
         }
 
         if (rackTask != None) {
@@ -575,8 +554,9 @@ private[spark] class TaskSetManager(
     // If some task has preferred locations only on hostname, put it in the no-prefs list
     // to avoid the wait from delay scheduling
     for (index <- getPendingTasksForHostPort(hostPort)) {
-      val newLocs = findPreferredLocations(tasks(index).preferredLocations, sched)
+      val newLocs = findPreferredLocations(tasks(index).preferredLocations, sched, true)
       if (newLocs.isEmpty) {
+        assert (findPreferredLocations(tasks(index).preferredLocations, sched).isEmpty)
         pendingTasksWithNoPrefs += index
       }
     }
