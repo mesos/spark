@@ -7,6 +7,8 @@ import java.nio.ByteBuffer
 import collection.mutable.ArrayBuffer
 
 /**
+ * In desperation to fix the bugs seen, moved partially to MemoryStore from spark trunk (pre-0.7.0).
+ * We were seeing core dumps due to incorrect handling of mapped byte buffers (among other things)
  * Stores blocks in memory, either as ArrayBuffers of deserialized Java objects or as
  * serialized ByteBuffers.
  */
@@ -18,18 +20,25 @@ private class MemoryStore(blockManager: BlockManager, maxMemory: Long)
   private val entries = new LinkedHashMap[String, Entry](32, 0.75f, true)
   private var currentMemory = 0L
 
+  // Object used to ensure that only one thread is putting blocks and if necessary, dropping
+  // blocks from the memory store.
+  private val putLock = new Object()
+
   logInfo("MemoryStore started with capacity %s.".format(Utils.memoryBytesToString(maxMemory)))
 
   def freeMemory: Long = maxMemory - currentMemory
 
   override def getSize(blockId: String): Long = {
-    synchronized {
+    entries.synchronized {
       entries.get(blockId).size
     }
   }
 
-  override def putBytes(blockId: String, bytes: ByteBuffer, level: StorageLevel) {
+  override def putBytes(blockId: String, _bytes: ByteBuffer, level: StorageLevel) {
+    // Work on a duplicate - since the original input might be used elsewhere.
+    val bytes = _bytes.duplicate()
     if (level.deserialized) {
+      // required ? It is on copy anyway.
       bytes.rewind()
       val values = blockManager.dataDeserialize(blockId, bytes)
       val elements = new ArrayBuffer[Any]
@@ -37,9 +46,6 @@ private class MemoryStore(blockManager: BlockManager, maxMemory: Long)
       val sizeEstimate = SizeEstimator.estimate(elements.asInstanceOf[AnyRef])
       tryToPut(blockId, elements, sizeEstimate, true)
     } else {
-      val entry = new Entry(bytes, bytes.limit, false)
-      ensureFreeSpace(blockId, bytes.limit)
-      synchronized { entries.put(blockId, entry) }
       tryToPut(blockId, bytes, bytes.limit, false)
     }
   }
@@ -63,7 +69,7 @@ private class MemoryStore(blockManager: BlockManager, maxMemory: Long)
   }
 
   override def getBytes(blockId: String): Option[ByteBuffer] = {
-    val entry = synchronized {
+    val entry = entries.synchronized {
       entries.get(blockId)
     }
     if (entry == null) {
@@ -76,7 +82,7 @@ private class MemoryStore(blockManager: BlockManager, maxMemory: Long)
   }
 
   override def getValues(blockId: String): Option[Iterator[Any]] = {
-    val entry = synchronized {
+    val entry = entries.synchronized {
       entries.get(blockId)
     }
     if (entry == null) {
@@ -90,7 +96,7 @@ private class MemoryStore(blockManager: BlockManager, maxMemory: Long)
   }
 
   override def remove(blockId: String) {
-    synchronized {
+    entries.synchronized {
       val entry = entries.get(blockId)
       if (entry != null) {
         entries.remove(blockId)
@@ -104,7 +110,7 @@ private class MemoryStore(blockManager: BlockManager, maxMemory: Long)
   }
 
   override def clear() {
-    synchronized {
+    entries.synchronized {
       entries.clear()
     }
     logInfo("MemoryStore cleared")
@@ -125,12 +131,22 @@ private class MemoryStore(blockManager: BlockManager, maxMemory: Long)
    * Try to put in a set of values, if we can free up enough space. The value should either be
    * an ArrayBuffer if deserialized is true or a ByteBuffer otherwise. Its (possibly estimated)
    * size must also be passed by the caller.
+   *
+   * Locks on the object putLock to ensure that all the put requests and its associated block
+   * dropping is done by only on thread at a time. Otherwise while one thread is dropping
+   * blocks to free memory for one block, another thread may use up the freed space for
+   * another block.
    */
   private def tryToPut(blockId: String, value: Any, size: Long, deserialized: Boolean): Boolean = {
-    synchronized {
+    // TODO: Its possible to optimize the locking by locking entries only when selecting blocks
+    // to be dropped. Once the to-be-dropped blocks have been selected, and lock on entries has been
+    // released, it must be ensured that those to-be-dropped blocks are not double counted for
+    // freeing up more space for another block that needs to be put. Only then the actually dropping
+    // of blocks (and writing to disk if necessary) can proceed in parallel.
+    putLock.synchronized {
       if (ensureFreeSpace(blockId, size)) {
         val entry = new Entry(value, size, deserialized)
-        entries.put(blockId, entry)
+        entries.synchronized { entries.put(blockId, entry) }
         currentMemory += size
         if (deserialized) {
           logInfo("Block %s stored as values to memory (estimated size %s, free %s)".format(
@@ -140,9 +156,8 @@ private class MemoryStore(blockManager: BlockManager, maxMemory: Long)
             blockId, Utils.memoryBytesToString(size), Utils.memoryBytesToString(freeMemory)))
         }
         true
-      } else {
-        // Tell the block manager that we couldn't put it in memory so that it can drop it to
-        // disk if the block allows disk storage.
+      }
+      else {
         val data = if (deserialized) {
           Left(value.asInstanceOf[ArrayBuffer[Any]])
         } else {
@@ -160,8 +175,8 @@ private class MemoryStore(blockManager: BlockManager, maxMemory: Long)
    * block from the same RDD (which leads to a wasteful cyclic replacement pattern for RDDs that
    * don't fit into memory that we want to avoid).
    *
-   * Assumes that a lock on the MemoryStore is held by the caller. (Otherwise, the freed space
-   * might fill up before the caller puts in their new value.)
+   * Assumes that a lock is held by the caller to ensure only one thread is dropping blocks.
+   * Otherwise, the freed space may fill up before the caller puts in their new value.
    */
   private def ensureFreeSpace(blockIdToAdd: String, space: Long): Boolean = {
     logInfo("ensureFreeSpace(%d) called with curMem=%d, maxMem=%d".format(
@@ -172,36 +187,44 @@ private class MemoryStore(blockManager: BlockManager, maxMemory: Long)
       return false
     }
 
-    // TODO: This should relinquish the lock on the MemoryStore while flushing out old blocks
-    // in order to allow parallelism in writing to disk
     if (maxMemory - currentMemory < space) {
       val rddToAdd = getRddId(blockIdToAdd)
       val selectedBlocks = new ArrayBuffer[String]()
       var selectedMemory = 0L
 
-      val iterator = entries.entrySet().iterator()
-      while (maxMemory - (currentMemory - selectedMemory) < space && iterator.hasNext) {
-        val pair = iterator.next()
-        val blockId = pair.getKey
-        if (rddToAdd != null && rddToAdd == getRddId(blockId)) {
-          logInfo("Will not store " + blockIdToAdd + " as it would require dropping another " +
-            "block from the same RDD")
-          return false
+      // This is synchronized to ensure that the set of entries is not changed
+      // (because of getValue or getBytes) while traversing the iterator, as that
+      // can lead to exceptions.
+      entries.synchronized {
+        val iterator = entries.entrySet().iterator()
+        while (maxMemory - (currentMemory - selectedMemory) < space && iterator.hasNext) {
+          val pair = iterator.next()
+          val blockId = pair.getKey
+          if (rddToAdd != null && rddToAdd == getRddId(blockId)) {
+            logInfo("Will not store " + blockIdToAdd + " as it would require dropping another " +
+              "block from the same RDD")
+            return false
+          }
+          selectedBlocks += blockId
+          selectedMemory += pair.getValue.size
         }
-        selectedBlocks += blockId
-        selectedMemory += pair.getValue.size
       }
 
       if (maxMemory - (currentMemory - selectedMemory) >= space) {
         logInfo(selectedBlocks.size + " blocks selected for dropping")
         for (blockId <- selectedBlocks) {
-          val entry = entries.get(blockId)
-          val data = if (entry.deserialized) {
-            Left(entry.value.asInstanceOf[ArrayBuffer[Any]])
-          } else {
-            Right(entry.value.asInstanceOf[ByteBuffer].duplicate())
+          val entry = entries.synchronized { entries.get(blockId) }
+          // This should never be null as only one thread should be dropping
+          // blocks and removing entries. However the check is still here for
+          // future safety.
+          if (entry != null) {
+            val data = if (entry.deserialized) {
+              Left(entry.value.asInstanceOf[ArrayBuffer[Any]])
+            } else {
+              Right(entry.value.asInstanceOf[ByteBuffer].duplicate())
+            }
+            blockManager.dropFromMemory(blockId, data)
           }
-          blockManager.dropFromMemory(blockId, data)
         }
         return true
       } else {
@@ -212,7 +235,7 @@ private class MemoryStore(blockManager: BlockManager, maxMemory: Long)
   }
 
   override def contains(blockId: String): Boolean = {
-    synchronized { entries.containsKey(blockId) }
+    entries.synchronized { entries.containsKey(blockId) }
   }
 }
 

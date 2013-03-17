@@ -18,6 +18,9 @@ import spark.Utils
 private class DiskStore(blockManager: BlockManager, rootDirs: String)
   extends BlockStore(blockManager) {
 
+  private val mapMode = MapMode.READ_ONLY
+  private var mapOpenMode = "r"
+
   val MAX_DIR_CREATION_ATTEMPTS: Int = 10
   val subDirsPerLocalDir = System.getProperty("spark.diskStore.subDirectories", "64").toInt
 
@@ -33,7 +36,10 @@ private class DiskStore(blockManager: BlockManager, rootDirs: String)
     getFile(blockId).length()
   }
 
-  override def putBytes(blockId: String, bytes: ByteBuffer, level: StorageLevel) {
+  override def putBytes(blockId: String, _bytes: ByteBuffer, level: StorageLevel) {
+    // So that we do not modify the input offsets !
+    // duplicate does not copy buffer, so inexpensive
+    val bytes = _bytes.duplicate()
     logDebug("Attempting to put block " + blockId)
     val startTime = System.currentTimeMillis
     val file = createFile(blockId)
@@ -45,6 +51,18 @@ private class DiskStore(blockManager: BlockManager, rootDirs: String)
     val finishTime = System.currentTimeMillis
     logDebug("Block %s stored as %s file on disk in %d ms".format(
       blockId, Utils.memoryBytesToString(bytes.limit), (finishTime - startTime)))
+  }
+
+  private def getFileBytes(file: File): ByteBuffer = {
+    val length = file.length()
+    val channel = new RandomAccessFile(file, mapOpenMode).getChannel()
+    val buffer = try {
+      channel.map(mapMode, 0, length)
+    } finally {
+      channel.close()
+    }
+
+    buffer
   }
 
   override def putValues(
@@ -68,9 +86,7 @@ private class DiskStore(blockManager: BlockManager, rootDirs: String)
 
     if (returnValues) {
       // Return a byte buffer for the contents of the file
-      val channel = new RandomAccessFile(file, "r").getChannel()
-      val buffer = channel.map(MapMode.READ_ONLY, 0, length)
-      channel.close()
+      val buffer = getFileBytes(file)
       PutResult(length, Right(buffer))
     } else {
       PutResult(length, null)
@@ -79,10 +95,7 @@ private class DiskStore(blockManager: BlockManager, rootDirs: String)
 
   override def getBytes(blockId: String): Option[ByteBuffer] = {
     val file = getFile(blockId)
-    val length = file.length().toInt
-    val channel = new RandomAccessFile(file, "r").getChannel()
-    val bytes = channel.map(MapMode.READ_ONLY, 0, length)
-    channel.close()
+    val bytes = getFileBytes(file)
     Some(bytes)
   }
 
