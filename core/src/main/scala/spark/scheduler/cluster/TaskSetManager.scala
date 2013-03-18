@@ -318,16 +318,19 @@ private[spark] class TaskSetManager(
     if (localTask != None) {
       return localTask
     }
-    val noPrefTask = findTaskFromList(pendingTasksWithNoPrefs)
-    if (noPrefTask != None) {
-      return noPrefTask
-    }
 
     if (TaskLocality.isAllowed(locality, TaskLocality.RACK_LOCAL)) {
       val rackLocalTask = findTaskFromList(getRackLocalPendingTasksForHost(hostPort))
       if (rackLocalTask != None) {
         return rackLocalTask
       }
+    }
+
+    // Look for no pref tasks AFTER rack local tasks - this has side effect that we will get to failed tasks later rather than sooner.
+    // TODO: That code path needs to be revisited (adding to no prefs list when host:port goes down).
+    val noPrefTask = findTaskFromList(pendingTasksWithNoPrefs)
+    if (noPrefTask != None) {
+      return noPrefTask
     }
 
     if (TaskLocality.isAllowed(locality, TaskLocality.ANY)) {
@@ -553,6 +556,7 @@ private[spark] class TaskSetManager(
     logInfo("Re-queueing tasks for " + hostPort + " from TaskSet " + taskSet.id)
     // If some task has preferred locations only on hostname, put it in the no-prefs list
     // to avoid the wait from delay scheduling
+    // TODO: Is this relevant anymore ? IMO, probably no - but not removing it until we are sure : it is beneign until then.
     for (index <- getPendingTasksForHostPort(hostPort)) {
       val newLocs = findPreferredLocations(tasks(index).preferredLocations, sched, true)
       if (newLocs.isEmpty) {
