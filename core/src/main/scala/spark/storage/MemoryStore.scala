@@ -7,8 +7,6 @@ import java.nio.ByteBuffer
 import collection.mutable.ArrayBuffer
 
 /**
- * In desperation to fix the bugs seen, moved partially to MemoryStore from spark trunk (pre-0.7.0).
- * We were seeing core dumps due to incorrect handling of mapped byte buffers (among other things)
  * Stores blocks in memory, either as ArrayBuffers of deserialized Java objects or as
  * serialized ByteBuffers.
  */
