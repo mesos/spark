@@ -28,7 +28,7 @@ private[spark] object AkkaUtils {
     val akkaTimeout = System.getProperty("spark.akka.timeout", "20").toInt
     val akkaFrameSize = System.getProperty("spark.akka.frameSize", "10").toInt
     // 10 seconds is the default akka timeout, but in a cluster, we need higher by default.
-    val akkaWriteTimeout = System.getProperty("spark.akka.writeTimeout", if (Utils.isYarnMode()) "30" else "10").toInt
+    val akkaWriteTimeout = System.getProperty("spark.akka.writeTimeout", "30").toInt
 
     val akkaConf = ConfigFactory.parseString("""
       akka.daemonic = on
