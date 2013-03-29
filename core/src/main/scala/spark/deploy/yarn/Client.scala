@@ -222,16 +222,12 @@ class Client(conf: Configuration, args: ClientArguments) extends Logging {
     // Add Xmx for am memory
     JAVA_OPTS += "-Xmx" + amMemory + "m "
 
-    if (env.isDefinedAt("SPARK_JAVA_OPTS")) {
-      JAVA_OPTS += env("SPARK_JAVA_OPTS") + " "
-    }
     // Commenting it out for now - so that people can refer to the properties if required. Remove it once cpuset version is pushed out.
     // The context is, default gc for server class machines end up using all cores to do gc - hence if there are multiple containers in same
     // node, spark gc effects all other containers performance (which can also be other spark containers)
     // Instead of using this, rely on cpusets by YARN to enforce spark behaves 'properly' in multi-tenant environments. Not sure how default java gc behaves if it is
     // limited to subset of cores on a node.
-/*
-    else {
+    if (env.isDefinedAt("SPARK_USE_CONC_INCR_GC") && java.lang.Boolean.parseBoolean(env("SPARK_USE_CONC_INCR_GC"))) {
       // In our expts, using (default) throughput collector has severe perf ramnifications in multi-tenant machines
       JAVA_OPTS += " -XX:+UseConcMarkSweepGC "
       JAVA_OPTS += " -XX:+CMSIncrementalMode "
@@ -239,7 +235,9 @@ class Client(conf: Configuration, args: ClientArguments) extends Logging {
       JAVA_OPTS += " -XX:CMSIncrementalDutyCycleMin=0 "
       JAVA_OPTS += " -XX:CMSIncrementalDutyCycle=10 "
     }
-*/
+    if (env.isDefinedAt("SPARK_JAVA_OPTS")) {
+      JAVA_OPTS += env("SPARK_JAVA_OPTS") + " "
+    }
 
     // Command for the ApplicationMaster
     val commands = List[String]("java " +
