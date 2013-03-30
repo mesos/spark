@@ -1,6 +1,7 @@
 package spark.scheduler.cluster
 
 import java.io.{File, FileInputStream, FileOutputStream}
+import java.lang.{Boolean => JBoolean}
 
 import scala.collection.mutable.ArrayBuffer
 import scala.collection.mutable.HashMap
@@ -22,6 +23,30 @@ private[spark] class ClusterScheduler(val sc: SparkContext)
 
   // How often to check for speculative tasks
   val SPECULATION_INTERVAL = System.getProperty("spark.speculation.interval", "100").toLong
+  // How often to revive offers in case there are pending tasks - that is how often to try to get
+  // tasks scheduled in case there are nodes available : default 0 is to disable it - to preserve existing behavior
+  // Note that this is required due to delayed scheduling due to data locality waits, etc.
+  // TODO: rename property ?
+  val TASK_REVIVAL_INTERVAL = System.getProperty("spark.tasks.revive.interval", "0").toLong
+
+  /*
+   This property controls how aggressive we should be to modulate waiting for host local task scheduling.
+   To elaborate, currently there is a time limit (3 sec def) to ensure that spark attempts to wait for host locality of tasks before
+   scheduling on other nodes. We have modified this in yarn branch such that offers to task set happen in prioritized order :
+   host-local, rack-local and then others
+   But once all available host local (and no pref) tasks are scheduled, instead of waiting for 3 sec before
+   scheduling to other nodes (which degrades performance for time sensitive tasks and on larger clusters), we can
+   modulate that : to also allow rack local nodes or any node. The default is still set to HOST - so that previous behavior is
+   maintained. This is to allow tuning the tension between pulling rdd data off node and scheduling computation asap.
+
+   TODO: rename property ? The value is one of
+   - HOST_LOCAL (default, no change w.r.t current behavior),
+   - RACK_LOCAL and
+   - ANY
+
+   Note that this property makes more sense when used in conjugation with spark.tasks.revive.interval > 0 : else it is not very effective.
+    */
+  val TASK_SCHEDULING_AGGRESSION = TaskLocality.parse(System.getProperty("spark.tasks.schedule.aggression", "HOST_LOCAL"))
 
   val activeTaskSets = new HashMap[String, TaskSetManager]
   var activeTaskSetsQueue = new ArrayBuffer[TaskSetManager]
@@ -35,6 +60,7 @@ private[spark] class ClusterScheduler(val sc: SparkContext)
 
   // Which hosts in the cluster are alive (contains hostPort's)
   val hostPortsAlive = new HashSet[String]
+  val hostToAliveHostPorts = new HashMap[String, HashSet[String]]
 
   // Which slave IDs we have executors on
   val slaveIdsWithExecutors = new HashSet[String]
@@ -67,11 +93,12 @@ private[spark] class ClusterScheduler(val sc: SparkContext)
   override def start() {
     backend.start()
 
-    if (System.getProperty("spark.speculation", "false") == "true") {
+    if (JBoolean.getBoolean("spark.speculation")) {
       new Thread("ClusterScheduler speculation check") {
         setDaemon(true)
 
         override def run() {
+          logInfo("Starting speculative execution thread")
           while (true) {
             try {
               Thread.sleep(SPECULATION_INTERVAL)
@@ -79,6 +106,27 @@ private[spark] class ClusterScheduler(val sc: SparkContext)
               case e: InterruptedException => {}
             }
             checkSpeculatableTasks()
+          }
+        }
+      }.start()
+    }
+
+
+    // Change to always run with some default if TASK_REVIVAL_INTERVAL <= 0 ?
+    if (TASK_REVIVAL_INTERVAL > 0) {
+      new Thread("ClusterScheduler task offer revival check") {
+        setDaemon(true)
+
+        override def run() {
+          logInfo("Starting speculative task offer revival thread")
+          while (true) {
+            try {
+              Thread.sleep(TASK_REVIVAL_INTERVAL)
+            } catch {
+              case e: InterruptedException => {}
+            }
+
+            if (hasPendingTasks()) backend.reviveOffers()
           }
         }
       }.start()
@@ -117,8 +165,12 @@ private[spark] class ClusterScheduler(val sc: SparkContext)
       SparkEnv.set(sc.env)
       // Mark each slave as alive and remember its hostname
       for (o <- offers) {
+        // DEBUG Code
+        Utils.checkHostPort(o.hostPort)
+
         slaveIdToHostPort(o.slaveId) = o.hostPort
         hostPortsAlive += o.hostPort
+        hostToAliveHostPorts.getOrElseUpdate(Utils.parseHostPort(o.hostPort)._1, new HashSet[String]).add(o.hostPort)
         slaveGained(o.slaveId, o.hostPort)
       }
       // Build a list of tasks to assign to each slave
@@ -145,8 +197,9 @@ private[spark] class ClusterScheduler(val sc: SparkContext)
             for (j <- 0 until numHostLocalTasks) list += i
           }
 
-          val numRackLocalTasks =  math.max(0, 
-            math.min(manager.numPendingTasksForHost(hostPort) - numHostLocalTasks, availableCpus(i)))
+          val numRackLocalTasks =  math.max(0,
+            // Remove host local tasks (which are also rack local btw !) from this
+            math.min(manager.numRackLocalPendingTasksForHost(hostPort) - numHostLocalTasks, availableCpus(i)))
           if (numRackLocalTasks > 0){
             val list = rackLocalOffers.getOrElseUpdate(host, new ArrayBuffer[Int])
             for (j <- 0 until numRackLocalTasks) list += i
@@ -161,16 +214,40 @@ private[spark] class ClusterScheduler(val sc: SparkContext)
         val offersPriorityList = new ArrayBuffer[Int](
           hostLocalOffers.size + rackLocalOffers.size + otherOffers.size)
         // First host local, then rack, then others
-        offersPriorityList ++= ClusterScheduler.prioritizeContainers(hostLocalOffers)
-        offersPriorityList ++= ClusterScheduler.prioritizeContainers(rackLocalOffers)
+        val numHostLocalOffers = {
+          val hostLocalPriorityList = ClusterScheduler.prioritizeContainers(hostLocalOffers)
+          offersPriorityList ++= hostLocalPriorityList
+          hostLocalPriorityList.size
+        }
+        val numRackLocalOffers = {
+          val rackLocalPriorityList = ClusterScheduler.prioritizeContainers(rackLocalOffers)
+          offersPriorityList ++= rackLocalPriorityList
+          rackLocalPriorityList.size
+        }
         offersPriorityList ++= ClusterScheduler.prioritizeContainers(otherOffers)
+
+        var lastLoop = false
+        val lastLoopIndex = TASK_SCHEDULING_AGGRESSION match {
+          case TaskLocality.HOST_LOCAL => numHostLocalOffers
+          case TaskLocality.RACK_LOCAL => numRackLocalOffers + numHostLocalOffers
+          case TaskLocality.ANY => offersPriorityList.size
+        }
 
         do {
           launchedTask = false
+          var loopCount = 0
           for (i <- offersPriorityList) {
             val sid = offers(i).slaveId
             val hostPort = offers(i).hostPort
-            manager.slaveOffer(sid, hostPort, availableCpus(i)) match {
+
+            // If last loop and within the lastLoopIndex, expand scope - else use null (which will use default/existing)
+            val overrideLocality = if (lastLoop && loopCount < lastLoopIndex) TASK_SCHEDULING_AGGRESSION else null
+
+            // If last loop, override waiting for host locality - we scheduled all local tasks already and there might be more available ...
+            loopCount += 1
+
+
+            manager.slaveOffer(sid, hostPort, availableCpus(i), overrideLocality) match {
               case Some(task) =>
                 tasks(i) += task
                 val tid = task.taskId
@@ -182,6 +259,21 @@ private[spark] class ClusterScheduler(val sc: SparkContext)
                 launchedTask = true
 
               case None => {}
+            }
+          }
+          // Loop once more - when lastLoop = true, then we try to schedule task on all nodes irrespective of
+          // data locality (we still go in order of priority : but that would not change anything since
+          // if data local tasks had been available, we would have scheduled them already)
+          if (lastLoop) {
+            // prevent more looping
+            launchedTask = false
+          } else if (!lastLoop && !launchedTask) {
+            // Do this only if TASK_SCHEDULING_AGGRESSION != HOST_LOCAL
+            if (TASK_SCHEDULING_AGGRESSION != TaskLocality.HOST_LOCAL) {
+              // fudge launchedTask to ensure we loop once more
+              launchedTask = true
+              // dont loop anymore
+              lastLoop = true
             }
           }
         } while (launchedTask)
@@ -201,8 +293,12 @@ private[spark] class ClusterScheduler(val sc: SparkContext)
           val slaveId = taskIdToSlaveId(tid)
           val hostPort = slaveIdToHostPort(slaveId)
           if (hostPortsAlive.contains(hostPort)) {
+            // DEBUG Code
+            Utils.checkHostPort(hostPort)
+
             slaveIdsWithExecutors -= slaveId
             hostPortsAlive -= hostPort
+            hostToAliveHostPorts.getOrElseUpdate(Utils.parseHostPort(hostPort)._1, new HashSet[String]).remove(hostPort)
             activeTaskSetsQueue.foreach(_.hostLost(hostPort))
             failedHostPort = Some(hostPort)
           }
@@ -293,13 +389,24 @@ private[spark] class ClusterScheduler(val sc: SparkContext)
     }
   }
 
+  // Check for pending tasks in all our active jobs.
+  def hasPendingTasks(): Boolean = {
+    synchronized {
+      activeTaskSetsQueue.exists( _.hasPendingTasks() )
+    }
+  }
+
   def slaveLost(slaveId: String) {
     var failedHostPort: Option[String] = None
     synchronized {
       val hostPort = slaveIdToHostPort(slaveId)
       if (hostPortsAlive.contains(hostPort)) {
+        // DEBUG Code
+        Utils.checkHostPort(hostPort)
+
         slaveIdsWithExecutors -= slaveId
         hostPortsAlive -= hostPort
+        hostToAliveHostPorts.getOrElseUpdate(Utils.parseHostPort(hostPort)._1, new HashSet[String]).remove(hostPort)
         activeTaskSetsQueue.foreach(_.hostLost(hostPort))
         failedHostPort = Some(hostPort)
       }
@@ -317,6 +424,9 @@ private[spark] class ClusterScheduler(val sc: SparkContext)
 
   // By default, rack is unknown
   def getRackForHost(value: String): Option[String] = None
+
+  // By default, (cached) hosts for rack is unknown
+  def getCachedHostsForRack(rack: String): Option[Set[String]] = None
 }
 
 

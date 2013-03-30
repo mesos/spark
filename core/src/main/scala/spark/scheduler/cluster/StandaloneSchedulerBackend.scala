@@ -5,6 +5,7 @@ import scala.collection.mutable.{ArrayBuffer, HashMap, HashSet}
 import akka.actor._
 import akka.util.duration._
 import akka.pattern.ask
+import akka.util.Duration
 
 import spark.{SparkException, Logging, TaskState}
 import akka.dispatch.Await
@@ -129,11 +130,11 @@ class StandaloneSchedulerBackend(scheduler: ClusterScheduler, actorSystem: Actor
       Props(new MasterActor(properties)), name = StandaloneSchedulerBackend.ACTOR_NAME)
   }
 
+  val timeout = Duration.create(System.getProperty("spark.akka.askTimeout", "10").toLong, "seconds")
+
   def stop() {
     try {
       if (masterActor != null) {
-        // Bumping the timeout to 10 from 5 .. helps when under load
-        val timeout = 10.seconds
         val future = masterActor.ask(StopMaster)(timeout)
         Await.result(future, timeout)
       }

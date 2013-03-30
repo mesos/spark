@@ -65,6 +65,44 @@ private object Utils extends Logging {
     return buf
   }
 
+
+  private val shutdownDeletePaths = new collection.mutable.HashSet[String]()
+
+  // Register the path to be deleted via shutdown hook
+  def registerShutdownDeleteDir(file: File) {
+    val absolutePath = file.getAbsolutePath()
+    shutdownDeletePaths.synchronized {
+      shutdownDeletePaths += absolutePath
+    }
+  }
+
+  // Is the path already registered to be deleted via a shutdown hook ?
+  def hasShutdownDeleteDir(file: File): Boolean = {
+    val absolutePath = file.getAbsolutePath()
+    shutdownDeletePaths.synchronized {
+      shutdownDeletePaths.contains(absolutePath)
+    }
+  }
+
+  // Note: if file is child of some registered path, while not equal to it, then return true; else false
+  // This is to ensure that two shutdown hooks do not try to delete each others paths - resulting in IOException
+  // and incomplete cleanup
+  def hasRootAsShutdownDeleteDir(file: File): Boolean = {
+
+    val absolutePath = file.getAbsolutePath()
+
+    var shutdownDeletePathsStr: String = ""
+    val retval = shutdownDeletePaths.synchronized {
+      shutdownDeletePathsStr = shutdownDeletePaths.mkString("[ ", ", ", " ]")
+
+      shutdownDeletePaths.find(path => ! absolutePath.equals(path) && absolutePath.startsWith(path) ).isDefined
+    }
+
+    logInfo("file = " + file + ", present as root ? " + retval + ", shutdownDeletePaths = " + shutdownDeletePathsStr)
+
+    retval
+  }
+
   /** Create a temporary directory inside the given parent directory */
   def createTempDir(root: String = System.getProperty("java.io.tmpdir")): File = {
     var attempts = 0
@@ -83,10 +121,14 @@ private object Utils extends Logging {
         }
       } catch { case e: IOException => ; }
     }
+
+    registerShutdownDeleteDir(dir)
+
     // Add a shutdown hook to delete the temp dir when the JVM exits
     Runtime.getRuntime.addShutdownHook(new Thread("delete Spark temp dir " + dir) {
       override def run() {
-        Utils.deleteRecursively(dir)
+        // Attempt to delete if some patch which is parent of this is not already registered.
+        if (! hasRootAsShutdownDeleteDir(dir)) Utils.deleteRecursively(dir)
       }
     })
     return dir

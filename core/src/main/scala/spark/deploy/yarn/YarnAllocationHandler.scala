@@ -11,8 +11,10 @@ import java.util.concurrent.{CopyOnWriteArrayList, ConcurrentHashMap}
 import java.util.concurrent.atomic.AtomicInteger
 import org.apache.hadoop.yarn.api.AMRMProtocol
 import collection.JavaConversions._
-import scala.collection.mutable.{ArrayBuffer, HashMap, HashSet}
+import collection.mutable.{ArrayBuffer, HashMap, HashSet}
 import org.apache.hadoop.conf.Configuration
+import java.util.{Collections, Set => JSet}
+import java.lang.{Boolean => JBoolean}
 
 object AllocationType extends Enumeration ("HOST", "RACK", "ANY") {
   type AllocationType = Value
@@ -458,6 +460,7 @@ object YarnAllocationHandler {
   // Note that it is possible for this to change : and RM will indicate that to us via update 
   // response to allocate. But we are punting on handling that for now.
   private val hostToRack = new ConcurrentHashMap[String, String]()
+  private val rackToHostSet = new ConcurrentHashMap[String, JSet[String]]()
 
   def newAllocator(conf: Configuration,
                    resourceManager: AMRMProtocol, appAttemptId: ApplicationAttemptId,
@@ -483,8 +486,7 @@ object YarnAllocationHandler {
   }
 
   // A simple method to copy the split info map.
-  private def generateNodeToWeight(conf: Configuration,
-                                   input: scala.collection.Map[String, scala.collection.Set[SplitInfo]]) :
+  private def generateNodeToWeight(conf: Configuration, input: collection.Map[String, collection.Set[SplitInfo]]) :
   // host to count, rack to count
   (Map[String, Int], Map[String, Int]) = {
 
@@ -512,13 +514,34 @@ object YarnAllocationHandler {
     hostToRack.get(host)
   }
 
+  def fetchCachedHostsForRack(rack: String): Option[Set[String]] = {
+    val set = rackToHostSet.get(rack)
+    if (null == set) return None
+
+    // No better way to get a Set[String] from JSet ?
+    val convertedSet: collection.mutable.Set[String] = set
+    Some(convertedSet.toSet)
+  }
+
   def populateRackInfo(conf: Configuration, hostname: String) {
+    Utils.checkHost(hostname)
+
     if (!hostToRack.containsKey(hostname)) {
       // If there are repeated failures to resolve, all to an ignore list ?
       val rackInfo = RackResolver.resolve(conf, hostname)
       if (null != rackInfo && null != rackInfo.getNetworkLocation) {
-        hostToRack.put(hostname, rackInfo.getNetworkLocation)
-      }
+        val rack = rackInfo.getNetworkLocation
+        hostToRack.put(hostname, rack)
+        if (! rackToHostSet.containsKey(rack)) {
+          rackToHostSet.putIfAbsent(rack, Collections.newSetFromMap(new ConcurrentHashMap[String, JBoolean]()))
+        }
+        rackToHostSet.get(rack).add(hostname)
+
+        // Since RackResolver caches, we are disabling this for now ...
+      } /* else {
+        // right ? Else we will keep calling rack resolver in case we cant resolve rack info ...
+        hostToRack.put(hostname, null)
+      } */
     }
   }
 }

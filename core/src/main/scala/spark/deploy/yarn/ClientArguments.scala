@@ -15,7 +15,7 @@ class ClientArguments(val args: Array[String]) {
   var numWorkers = 2
   var amUser = System.getProperty("user.name")
   var amQueue = System.getProperty("QUEUE", "default")
-  var amMemory = 512
+  var amMemory: Int = 512
   // TODO
   var inputFormatInfo: List[InputFormatInfo] = null
 
@@ -40,6 +40,10 @@ class ClientArguments(val args: Array[String]) {
 
         case ("--args") :: value :: tail =>
           userArgsBuffer += value
+          args = tail
+
+        case ("--master-memory") :: MemoryParam(value) :: tail =>
+          amMemory = value
           args = tail
 
         case ("--num-workers") :: IntParam(value) :: tail =>

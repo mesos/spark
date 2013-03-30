@@ -10,8 +10,7 @@ import akka.actor._
 import akka.dispatch._
 import akka.pattern.ask
 import akka.remote._
-import akka.util.{Duration, Timeout}
-import akka.util.duration._
+import akka.util.Duration
 
 import spark.{Logging, SparkException, Utils}
 
@@ -137,7 +136,8 @@ private[spark] class BlockManagerMasterActor(val isLocal: Boolean) extends Actor
         val originalLevel: StorageLevel = blocks.get(blockId)
         blocks.remove(blockId)
         if (originalLevel.useMemory) {
-          remainingMem += memSize
+          // already done above.
+          // remainingMem += memSize
           logInfo("Removed %s on %s:%d in memory (size: %s, free: %s)".format(
             blockId, blockManagerId.host, blockManagerId.port, Utils.memoryBytesToString(memSize),
             Utils.memoryBytesToString(remainingMem)))
@@ -348,7 +348,7 @@ private[spark] class BlockManagerMaster(actorSystem: ActorSystem, isMaster: Bool
   val DEFAULT_MANAGER_IP: String = Utils.localHostName()
   val DEFAULT_MANAGER_PORT: Int = 10902
 
-  val timeout = 10.seconds
+  val timeout = Duration.create(System.getProperty("spark.akka.askTimeout", "10").toLong, "seconds")
   var masterActor: ActorRef = null
 
   if (isMaster) {

@@ -110,7 +110,7 @@ class Client(conf: Configuration, args: ClientArguments) extends Logging {
     logInfo("Max mem capabililty of resources in this cluster " + maxMem)
     
     // If the cluster does not have enough memory resources, exit.
-    val requestedMem = args.amMemory + args.numWorkers * args.workerMemory
+    val requestedMem = (args.amMemory + YarnAllocationHandler.MEMORY_OVERHEAD) + args.numWorkers * args.workerMemory
     if (requestedMem > maxMem) {
       logError("Cluster cannot satisfy memory resource request of " + requestedMem)
       System.exit(1)
@@ -132,8 +132,9 @@ class Client(conf: Configuration, args: ClientArguments) extends Logging {
     // Add them as local resources to the AM
     val fs = FileSystem.get(conf)
     Map("spark.jar" -> System.getenv("SPARK_JAR"), "app.jar" -> args.userJar, "log4j.properties" -> System.getenv("SPARK_LOG4J_CONF"))
-    .foreach { case(destName, localPath) =>
-      if (null != localPath) {
+    .foreach { case(destName, _localPath) =>
+      val localPath: String = if (null != _localPath) _localPath.trim() else ""
+      if (! localPath.isEmpty()) {
         val src = new Path(localPath)
         val pathSuffix = appName + "/" + appId.getId() + destName
         val dst = new Path(fs.getHomeDirectory(), pathSuffix)
@@ -210,21 +211,37 @@ class Client(conf: Configuration, args: ClientArguments) extends Logging {
     amContainer.setLocalResources(localResources)
     amContainer.setEnvironment(env)
 
-    var amMemory = java.lang.Math.max(args.amMemory,
-      newApp.getMinimumResourceCapability().getMemory() - YarnAllocationHandler.MEMORY_OVERHEAD)
-    
+    val minResMemory: Int = newApp.getMinimumResourceCapability().getMemory()
+
+    var amMemory = ((args.amMemory / minResMemory) * minResMemory) +
+        (if (0 != (args.amMemory % minResMemory)) minResMemory else 0) - YarnAllocationHandler.MEMORY_OVERHEAD
+
     // Extra options for the JVM
     var JAVA_OPTS = ""
 
     // Add Xmx for am memory
     JAVA_OPTS += "-Xmx" + amMemory + "m "
 
+    // Commenting it out for now - so that people can refer to the properties if required. Remove it once cpuset version is pushed out.
+    // The context is, default gc for server class machines end up using all cores to do gc - hence if there are multiple containers in same
+    // node, spark gc effects all other containers performance (which can also be other spark containers)
+    // Instead of using this, rely on cpusets by YARN to enforce spark behaves 'properly' in multi-tenant environments. Not sure how default java gc behaves if it is
+    // limited to subset of cores on a node.
+    if (env.isDefinedAt("SPARK_USE_CONC_INCR_GC") && java.lang.Boolean.parseBoolean(env("SPARK_USE_CONC_INCR_GC"))) {
+      // In our expts, using (default) throughput collector has severe perf ramnifications in multi-tenant machines
+      JAVA_OPTS += " -XX:+UseConcMarkSweepGC "
+      JAVA_OPTS += " -XX:+CMSIncrementalMode "
+      JAVA_OPTS += " -XX:+CMSIncrementalPacing "
+      JAVA_OPTS += " -XX:CMSIncrementalDutyCycleMin=0 "
+      JAVA_OPTS += " -XX:CMSIncrementalDutyCycle=10 "
+    }
     if (env.isDefinedAt("SPARK_JAVA_OPTS")) {
       JAVA_OPTS += env("SPARK_JAVA_OPTS") + " "
     }
 
     // Command for the ApplicationMaster
     val commands = List[String]("java " +
+      " -server " +
       JAVA_OPTS +
       " spark.deploy.yarn.ApplicationMaster" +
       " --class " + args.userClass + 
@@ -240,7 +257,7 @@ class Client(conf: Configuration, args: ClientArguments) extends Logging {
     
     val capability = Records.newRecord(classOf[Resource]).asInstanceOf[Resource]
     // Memory for the ApplicationMaster
-    capability.setMemory(args.amMemory)
+    capability.setMemory(args.amMemory + YarnAllocationHandler.MEMORY_OVERHEAD)
     amContainer.setResource(capability)
     
     return amContainer

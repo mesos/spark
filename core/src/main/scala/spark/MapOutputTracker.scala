@@ -8,8 +8,6 @@ import akka.dispatch._
 import akka.pattern.ask
 import akka.remote._
 import akka.util.Duration
-import akka.util.Timeout
-import akka.util.duration._
 
 import scala.collection.mutable.HashMap
 import scala.collection.mutable.HashSet
@@ -37,13 +35,13 @@ private[spark] class MapOutputTrackerActor(tracker: MapOutputTracker) extends Ac
 }
 
 private[spark] class MapOutputTracker(actorSystem: ActorSystem, isMaster: Boolean) extends Logging {
-  val host: String = System.getProperty("spark.master.host", "localhost")
-  val port: Int = System.getProperty("spark.master.port", "7077").toInt
-  val actorName: String = "MapOutputTracker"
+  private val masterHost: String = System.getProperty("spark.master.host", "localhost")
+  private val masterPort: Int = System.getProperty("spark.master.port", "7077").toInt
+  private val actorName: String = "MapOutputTracker"
 
-  val timeout = 10.seconds
+  val timeout = Duration.create(System.getProperty("spark.akka.askTimeout", "10").toLong, "seconds")
 
-  var mapStatuses = new ConcurrentHashMap[Int, Array[MapStatus]]
+  private var mapStatuses = new ConcurrentHashMap[Int, Array[MapStatus]]
 
   // Incremented every time a fetch fails so that client nodes know to clear
   // their cache of map output locations if this happens.
@@ -52,14 +50,14 @@ private[spark] class MapOutputTracker(actorSystem: ActorSystem, isMaster: Boolea
 
   // Cache a serialized version of the output statuses for each shuffle to send them out faster
   var cacheGeneration = generation
-  val cachedSerializedStatuses = new HashMap[Int, Array[Byte]]
+  private val cachedSerializedStatuses = new HashMap[Int, Array[Byte]]
 
-  var trackerActor: ActorRef = if (isMaster) {
+  private var trackerActor: ActorRef = if (isMaster) {
     val actor = actorSystem.actorOf(Props(new MapOutputTrackerActor(this)), name = actorName)
     logInfo("Registered MapOutputTrackerActor actor")
     actor
   } else {
-    val url = "akka://spark@%s:%s/user/%s".format(host, port, actorName)
+    val url = "akka://spark@%s:%s/user/%s".format(masterHost, masterPort, actorName)
     actorSystem.actorFor(url)
   }
 
@@ -83,12 +81,11 @@ private[spark] class MapOutputTracker(actorSystem: ActorSystem, isMaster: Boolea
   }
 
   def registerShuffle(shuffleId: Int, numMaps: Int) {
-    if (mapStatuses.get(shuffleId) != null) {
+    if (mapStatuses.putIfAbsent(shuffleId, new Array[MapStatus](numMaps)) != null) {
       throw new IllegalArgumentException("Shuffle ID " + shuffleId + " registered twice")
     }
-    mapStatuses.put(shuffleId, new Array[MapStatus](numMaps))
   }
-  
+
   def registerMapOutput(shuffleId: Int, mapId: Int, status: MapStatus) {
     var array = mapStatuses.get(shuffleId)
     array.synchronized {
@@ -128,6 +125,7 @@ private[spark] class MapOutputTracker(actorSystem: ActorSystem, isMaster: Boolea
     val statuses = mapStatuses.get(shuffleId)
     if (statuses == null) {
       logInfo("Don't have map outputs for shuffle " + shuffleId + ", fetching them")
+      var fetchedStatuses: Array[MapStatus] = null
       fetching.synchronized {
         if (fetching.contains(shuffleId)) {
           // Someone else is fetching it; wait for them to be done
@@ -138,29 +136,65 @@ private[spark] class MapOutputTracker(actorSystem: ActorSystem, isMaster: Boolea
               case e: InterruptedException =>
             }
           }
-          return mapStatuses.get(shuffleId).map(status =>
-            (status.address, MapOutputTracker.decompressSize(status.compressedSizes(reduceId))))
-        } else {
+        }
+
+        // Either while we waited the fetch happened successfully, or
+        // someone fetched it in between the get and the fetching.synchronized.
+        fetchedStatuses = mapStatuses.get(shuffleId)
+        if (null == fetchedStatuses) {
+          // We have to do the fetch, get others to wait for us.
           fetching += shuffleId
         }
       }
-      // We won the race to fetch the output locs; do so
-      logInfo("Doing the fetch; tracker actor = " + trackerActor)
-      val hostPort = Utils.localHostPort()
-      val fetchedBytes = askTracker(GetMapOutputStatuses(shuffleId, hostPort)).asInstanceOf[Array[Byte]]
-      val fetchedStatuses = deserializeStatuses(fetchedBytes)
-      
-      logInfo("Got the output locations")
-      mapStatuses.put(shuffleId, fetchedStatuses)
-      fetching.synchronized {
-        fetching -= shuffleId
-        fetching.notifyAll()
+
+      if (null != fetchedStatuses) {
+        // not registered with fetching, simply return it
+        // sync'ing on fetchedStatuses for consistency of api sake
+        // Since this is a remote fetch, it should not be modified locally; but the local
+        // statuses ARE modified - modifying code to uniformly lock to remove
+        // implicit knowledge of whether it is remote or local (since we do not maintain that
+        // explicitly in the map)
+        fetchedStatuses.synchronized {
+          return fetchedStatuses.map(status =>
+            (status.address, MapOutputTracker.decompressSize(status.compressedSizes(reduceId))))
+        }
       }
-      return fetchedStatuses.map(s =>
-        (s.address, MapOutputTracker.decompressSize(s.compressedSizes(reduceId))))
+
+
+      try {
+        // We won the race to fetch the output locs; do so
+        logInfo("Doing the fetch; tracker actor = " + trackerActor)
+        val hostPort = Utils.localHostPort()
+        val fetchedBytes = askTracker(GetMapOutputStatuses(shuffleId, hostPort)).asInstanceOf[Array[Byte]]
+
+        fetchedStatuses = deserializeStatuses(fetchedBytes)
+
+        logInfo("Got the output locations")
+        val prevStatus = mapStatuses.put(shuffleId, fetchedStatuses)
+        // enable this assertion ?
+        // assert (null == prevStatus)
+      } finally {
+        // release lock in try/finally
+        fetching.synchronized {
+          fetching -= shuffleId
+          fetching.notifyAll()
+        }
+      }
+      if (null != fetchedStatuses) {
+        fetchedStatuses.synchronized {
+          return fetchedStatuses.map(s =>
+            (s.address, MapOutputTracker.decompressSize(s.compressedSizes(reduceId))))
+        }
+      }
+      else{
+        // What now ? Throw exception ?
+        throw new FetchFailedException(shuffleId, reduceId, null)
+      }
     } else {
-      return statuses.map(s =>
-        (s.address, MapOutputTracker.decompressSize(s.compressedSizes(reduceId))))
+      statuses.synchronized {
+        return statuses.map(s =>
+          (s.address, MapOutputTracker.decompressSize(s.compressedSizes(reduceId))))
+      }
     }
   }
 
@@ -192,7 +226,8 @@ private[spark] class MapOutputTracker(actorSystem: ActorSystem, isMaster: Boolea
     generationLock.synchronized {
       if (newGen > generation) {
         logInfo("Updating generation to " + newGen + " and clearing cache")
-        mapStatuses = new ConcurrentHashMap[Int, Array[MapStatus]]
+        // mapStatuses = new ConcurrentHashMap[Int, Array[MapStatus]]
+        mapStatuses.clear()
         generation = newGen
       }
     }
@@ -230,10 +265,13 @@ private[spark] class MapOutputTracker(actorSystem: ActorSystem, isMaster: Boolea
   // Serialize an array of map output locations into an efficient byte format so that we can send
   // it to reduce tasks. We do this by compressing the serialized bytes using GZIP. They will
   // generally be pretty compressible because many map outputs will be on the same hostname.
-  def serializeStatuses(statuses: Array[MapStatus]): Array[Byte] = {
+  private def serializeStatuses(statuses: Array[MapStatus]): Array[Byte] = {
     val out = new ByteArrayOutputStream
     val objOut = new ObjectOutputStream(new GZIPOutputStream(out))
-    objOut.writeObject(statuses)
+    // Since statuses can be modified in parallel, sync on it
+    statuses.synchronized {
+      objOut.writeObject(statuses)
+    }
     objOut.close()
     out.toByteArray
   }
@@ -241,7 +279,9 @@ private[spark] class MapOutputTracker(actorSystem: ActorSystem, isMaster: Boolea
   // Opposite of serializeStatuses.
   def deserializeStatuses(bytes: Array[Byte]): Array[MapStatus] = {
     val objIn = new ObjectInputStream(new GZIPInputStream(new ByteArrayInputStream(bytes)))
-    objIn.readObject().asInstanceOf[Array[MapStatus]]
+    objIn.readObject().asInstanceOf[Array[MapStatus]].
+      // drop all null's from status - not sure why they are occuring though. Causes NPE downstream in slave if present
+      filter( _ != null )
   }
 }
 

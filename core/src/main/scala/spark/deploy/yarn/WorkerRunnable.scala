@@ -55,10 +55,34 @@ class WorkerRunnable(container: Container, conf: Configuration, masterAddress: S
     if (env.isDefinedAt("SPARK_JAVA_OPTS")) {
       JAVA_OPTS += env("SPARK_JAVA_OPTS") + " "
     }
-    
+    // Commenting it out for now - so that people can refer to the properties if required. Remove it once cpuset version is pushed out.
+    // The context is, default gc for server class machines end up using all cores to do gc - hence if there are multiple containers in same
+    // node, spark gc effects all other containers performance (which can also be other spark containers)
+    // Instead of using this, rely on cpusets by YARN to enforce spark behaves 'properly' in multi-tenant environments. Not sure how default java gc behaves if it is
+    // limited to subset of cores on a node.
+/*
+    else {
+      // If no java_opts specified, default to using -XX:+CMSIncrementalMode
+      // It might be possible that other modes/config is being done in SPARK_JAVA_OPTS, so we dont want to mess with it.
+      // In our expts, using (default) throughput collector has severe perf ramnifications in multi-tennent machines
+      // The options are based on
+      // http://www.oracle.com/technetwork/java/gc-tuning-5-138395.html#0.0.0.%20When%20to%20Use%20the%20Concurrent%20Low%20Pause%20Collector|outline
+      JAVA_OPTS += " -XX:+UseConcMarkSweepGC "
+      JAVA_OPTS += " -XX:+CMSIncrementalMode "
+      JAVA_OPTS += " -XX:+CMSIncrementalPacing "
+      JAVA_OPTS += " -XX:CMSIncrementalDutyCycleMin=0 "
+      JAVA_OPTS += " -XX:CMSIncrementalDutyCycle=10 "
+    }
+*/
+
     ctx.setUser(UserGroupInformation.getCurrentUser().getShortUserName())
     val commands = List[String]("java " +
-      JAVA_OPTS + 
+      " -server " +
+      // Kill if OOM is raised - leverage yarn's failure handling to cause rescheduling.
+      // Not killing the task leaves various aspects of the worker and (to some extent) the jvm in an inconsistent state.
+      // TODO: If the OOM is not recoverable by rescheduling it on different node, then do 'something' to fail job ... akin to blacklisting trackers in mapred ?
+      " -XX:OnOutOfMemoryError='kill %p' " +
+      JAVA_OPTS +
       " spark.executor.StandaloneExecutorBackend " +
       masterAddress + " " +
       slaveId + " " +
