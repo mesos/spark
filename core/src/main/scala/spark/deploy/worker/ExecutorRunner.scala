@@ -1,14 +1,20 @@
 package spark.deploy.worker
 
 import java.io._
-import spark.deploy.{ExecutorState, ExecutorStateChanged, ApplicationDescription}
-import akka.actor.ActorRef
-import spark.{Utils, Logging}
 import java.net.{URI, URL}
+
+import scala.Some
+
+import akka.actor._
+import akka.util.duration._
 import org.apache.hadoop.fs.{Path, FileSystem}
 import org.apache.hadoop.conf.Configuration
-import scala.Some
+
+import spark.{Utils, Logging}
+import spark.deploy.{ExecutorState, ExecutorStateChanged, ApplicationDescription}
 import spark.deploy.ExecutorStateChanged
+import spark.scheduler.cluster.RegisterExecutor
+import spark.scheduler.cluster.StopExecutor
 
 /**
  * Manages the execution of one executor process.
@@ -23,31 +29,47 @@ private[spark] class ExecutorRunner(
     val workerId: String,
     val hostname: String,
     val sparkHome: File,
-    val workDir: File)
+    val workDir: File,
+    val actorSystem: ActorSystem,
+    val actorSystemUrl: String)
   extends Logging {
 
   val fullId = appId + "/" + execId
   var workerThread: Thread = null
   var process: Process = null
   var shutdownHook: Thread = null
+  var watcherActor: ActorRef = null
+  var executorActor: ActorRef = null
+
+  // A simple actor that will be used to register the executor actor with us and tell it to stop
+  class WatcherActor extends Actor {
+    override def receive = {
+      case RegisterExecutor(_, _, _) =>
+        logInfo("Executor " + fullId + " registered at " + sender.path)
+        executorActor = sender
+
+      case "stop" =>
+        context.stop(self)
+    }
+  }
 
   def start() {
+    watcherActor = actorSystem.actorOf(Props(new WatcherActor),
+      name = "Watcher_%s_%s".format(appId, execId))
+
+    // Add a shutdown hook that kills executor on shutdown.
+    shutdownHook = new Thread() { 
+      override def run() {
+        logInfo("Shutdown hook killing executor " + fullId)
+        stopProcess()
+      }
+    }
+    Runtime.getRuntime.addShutdownHook(shutdownHook)
+
     workerThread = new Thread("ExecutorRunner for " + fullId) {
       override def run() { fetchAndRunExecutor() }
     }
     workerThread.start()
-
-    // Shutdown hook that kills actors on shutdown.
-    shutdownHook = new Thread() { 
-      override def run() {
-        if (process != null) {
-          logInfo("Shutdown hook killing child process.")
-          process.destroy()
-          process.waitFor()
-        }
-      }
-    }
-    Runtime.getRuntime.addShutdownHook(shutdownHook)
   }
 
   /** Stop this executor runner, including killing the process it launched */
@@ -55,19 +77,32 @@ private[spark] class ExecutorRunner(
     if (workerThread != null && workerThread.isAlive) {
       workerThread.interrupt()
       workerThread = null
-      if (process != null) {
-        logInfo("Killing process!")
-        process.destroy()
-        process.waitFor()
-      }
+      stopProcess()
       worker ! ExecutorStateChanged(appId, execId, ExecutorState.KILLED, None, None)
       Runtime.getRuntime.removeShutdownHook(shutdownHook)
+    }
+  }
+
+  /** Stop the worker process */
+  def stopProcess() {
+    if (process != null) {
+      if (executorActor != null) {
+        // Send the actor a message to stop. This doesn't matter on UNIX but does on Windows
+        // because Process.destroy will only the top-level "spark-executor" script that spawned
+        // an executor JVM. It's not a perfect solution but we'll deal with it by spawning
+        // "java" directly in future versions.
+        executorActor ! StopExecutor
+      }
+      process.destroy()
+      process.waitFor()
+      watcherActor ! "stop"
     }
   }
 
   /** Replace variables such as {{EXECUTOR_ID}} and {{CORES}} in a command argument passed to us */
   def substituteVariables(argument: String): String = argument match {
     case "{{EXECUTOR_ID}}" => execId.toString
+    case "{{WORKER_URL}}" => "%s/user/Watcher_%s_%s".format(actorSystemUrl, appId, execId)
     case "{{HOSTNAME}}" => hostname
     case "{{CORES}}" => cores.toString
     case other => other
@@ -129,7 +164,7 @@ private[spark] class ExecutorRunner(
       val exitCode = process.waitFor()
       val message = "Command exited with code " + exitCode
       if (exitCode == 0) {
-          // we explicitly shut down with exit code 0 in StandaloneExecutorBackend
+          // We explicitly shut down with exit code 0 in StandaloneExecutorBackend
           worker ! ExecutorStateChanged(appId, execId, ExecutorState.KILLED, Some(message), Some(exitCode))
       } else {
           worker ! ExecutorStateChanged(appId, execId, ExecutorState.FAILED, Some(message), Some(exitCode))
@@ -140,11 +175,10 @@ private[spark] class ExecutorRunner(
 
       case e: Exception => {
         logError("Error running executor", e)
-        if (process != null) {
-          process.destroy()
-        }
+        stopProcess()
         val message = e.getClass + ": " + e.getMessage
         worker ! ExecutorStateChanged(appId, execId, ExecutorState.FAILED, Some(message), None)
+        Runtime.getRuntime.removeShutdownHook(shutdownHook)
       }
     }
   }

@@ -97,7 +97,7 @@ private[spark] class CoarseMesosSchedulerBackend(
     val driverUrl = "akka://spark@%s:%s/user/%s".format(
       System.getProperty("spark.driver.host"), System.getProperty("spark.driver.port"),
       StandaloneSchedulerBackend.ACTOR_NAME)
-    val command = "\"%s\" spark.executor.StandaloneExecutorBackend %s %s %s %d".format(
+    val command = "\"%s\" spark.executor.StandaloneExecutorBackend %s none %s %s %d".format(
       runScript, driverUrl, offer.getSlaveId.getValue, offer.getHostname, numCores)
     val environment = Environment.newBuilder()
     sc.executorEnvs.foreach { case (key, value) =>

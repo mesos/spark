@@ -8,6 +8,7 @@ import akka.pattern.ask
 
 import spark.{SparkException, Logging, TaskState}
 import akka.dispatch.Await
+import akka.dispatch.Future
 import java.util.concurrent.atomic.AtomicInteger
 import akka.remote.{RemoteClientShutdown, RemoteClientDisconnected, RemoteClientLifeCycleEvent}
 
@@ -65,7 +66,6 @@ class StandaloneSchedulerBackend(scheduler: ClusterScheduler, actorSystem: Actor
         makeOffers()
 
       case StopDriver =>
-        stopExecutors()
         sender ! true
         context.stop(self)
 
@@ -101,17 +101,6 @@ class StandaloneSchedulerBackend(scheduler: ClusterScheduler, actorSystem: Actor
         freeCores(task.executorId) -= 1
         executorActor(task.executorId) ! LaunchTask(task)
       }
-    }
-
-    // Stop running executors properly by sending a shutdown message and giving them a short time to react
-    def stopExecutors() {
-      val timeout = 500.millis
-      val stopFutures = executorActor.values.map(executor => executor.ask(StopExecutor)(timeout))
-      stopFutures.foreach(future => try {
-        Await.result(future, timeout)
-      } catch {
-        case e: Exception => {}
-      })
     }
 
     // Remove a disconnected slave from the cluster
