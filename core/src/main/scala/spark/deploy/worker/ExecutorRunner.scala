@@ -52,7 +52,7 @@ private[spark] class ExecutorRunner(
 
   /** Stop this executor runner, including killing the process it launched */
   def kill() {
-    if (workerThread != null) {
+    if (workerThread != null && workerThread.isAlive) {
       workerThread.interrupt()
       workerThread = null
       if (process != null) {
@@ -128,8 +128,12 @@ private[spark] class ExecutorRunner(
       // times on the same machine.
       val exitCode = process.waitFor()
       val message = "Command exited with code " + exitCode
-      worker ! ExecutorStateChanged(appId, execId, ExecutorState.FAILED, Some(message),
-                                    Some(exitCode))
+      if (exitCode == 0) {
+          // we explicitly shut down with exit code 0 in StandaloneExecutorBackend
+          worker ! ExecutorStateChanged(appId, execId, ExecutorState.KILLED, Some(message), Some(exitCode))
+      } else {
+          worker ! ExecutorStateChanged(appId, execId, ExecutorState.FAILED, Some(message), Some(exitCode))
+      }
     } catch {
       case interrupted: InterruptedException =>
         logInfo("Runner thread for executor " + fullId + " interrupted")

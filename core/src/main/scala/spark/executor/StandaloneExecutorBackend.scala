@@ -4,7 +4,7 @@ import java.nio.ByteBuffer
 import spark.Logging
 import spark.TaskState.TaskState
 import spark.util.AkkaUtils
-import akka.actor.{ActorRef, Actor, Props, Terminated}
+import akka.actor.{ActorRef, Actor, ActorSystem, Props, Terminated}
 import akka.remote.{RemoteClientLifeCycleEvent, RemoteClientShutdown, RemoteClientDisconnected}
 import java.util.concurrent.{TimeUnit, ThreadPoolExecutor, SynchronousQueue}
 import spark.scheduler.cluster._
@@ -12,12 +12,14 @@ import spark.scheduler.cluster.RegisteredExecutor
 import spark.scheduler.cluster.LaunchTask
 import spark.scheduler.cluster.RegisterExecutorFailed
 import spark.scheduler.cluster.RegisterExecutor
+import spark.scheduler.cluster.StopExecutor
 
 private[spark] class StandaloneExecutorBackend(
     driverUrl: String,
     executorId: String,
     hostname: String,
-    cores: Int)
+    cores: Int,
+    actorSystem: ActorSystem)
   extends Actor
   with ExecutorBackend
   with Logging {
@@ -50,6 +52,12 @@ private[spark] class StandaloneExecutorBackend(
       } else {
         executor.launchTask(this, taskDesc.taskId, taskDesc.serializedTask)
       }
+      
+    case StopExecutor =>
+      sender ! true
+      actorSystem.shutdown()
+      context.stop(self)
+      System.exit(0)
 
     case Terminated(_) | RemoteClientDisconnected(_, _) | RemoteClientShutdown(_, _) =>
       logError("Driver terminated or disconnected! Shutting down.")
@@ -67,7 +75,7 @@ private[spark] object StandaloneExecutorBackend {
     // before getting started with all our system properties, etc
     val (actorSystem, boundPort) = AkkaUtils.createActorSystem("sparkExecutor", hostname, 0)
     val actor = actorSystem.actorOf(
-      Props(new StandaloneExecutorBackend(driverUrl, executorId, hostname, cores)),
+      Props(new StandaloneExecutorBackend(driverUrl, executorId, hostname, cores, actorSystem)),
       name = "Executor")
     actorSystem.awaitTermination()
   }
