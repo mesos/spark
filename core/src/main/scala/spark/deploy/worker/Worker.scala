@@ -1,7 +1,7 @@
 package spark.deploy.worker
 
 import scala.collection.mutable.{ArrayBuffer, HashMap}
-import akka.actor.{ActorRef, Props, Actor, ActorSystem, Terminated}
+import akka.actor._
 import akka.util.duration._
 import spark.{Logging, Utils}
 import spark.util.AkkaUtils
@@ -22,7 +22,8 @@ private[spark] class Worker(
     cores: Int,
     memory: Int,
     masterUrl: String,
-    workDirPath: String = null)
+    actorSystemUrl: String,
+    workDirPath: String)
   extends Actor with Logging {
 
   val DATE_FORMAT = new SimpleDateFormat("yyyyMMddHHmmss")  // For worker and executor IDs
@@ -32,6 +33,7 @@ private[spark] class Worker(
 
   var master: ActorRef = null
   var masterWebUiUrl : String = ""
+  var masterAddress: Address = null
   val workerId = generateWorkerId()
   var sparkHome: File = null
   var workDir: File = null
@@ -74,20 +76,14 @@ private[spark] class Worker(
 
   def connectToMaster() {
     logInfo("Connecting to master " + masterUrl)
-    try {
-      master = context.actorFor(Master.toAkkaUrl(masterUrl))
-      master ! RegisterWorker(workerId, ip, port, cores, memory, webUiPort, publicAddress)
-      context.system.eventStream.subscribe(self, classOf[RemoteClientLifeCycleEvent])
-      context.watch(master) // Doesn't work with remote actors, but useful for testing
-    } catch {
-      case e: Exception =>
-        logError("Failed to connect to master", e)
-        System.exit(1)
-    }
+    master = context.actorFor(Master.toAkkaUrl(masterUrl))
+    master ! RegisterWorker(workerId, ip, port, cores, memory, webUiPort, publicAddress)
+    context.system.eventStream.subscribe(self, classOf[RemoteClientLifeCycleEvent])
+    context.watch(master) // Doesn't work with remote actors, but useful for testing
   }
 
   def startWebUi() {
-    val webUi = new WorkerWebUI(context.system, self)
+    val webUi = new WorkerWebUI(context.system, self, workDir)
     try {
       AkkaUtils.startSprayServer(context.system, "0.0.0.0", webUiPort, webUi.handler)
     } catch {
@@ -100,6 +96,7 @@ private[spark] class Worker(
   override def receive = {
     case RegisteredWorker(url) =>
       masterWebUiUrl = url
+      masterAddress = sender.path.address
       logInfo("Successfully registered with master")
       context.system.scheduler.schedule(0 millis, HEARTBEAT_MILLIS millis) {
         master ! Heartbeat(workerId)
@@ -112,7 +109,8 @@ private[spark] class Worker(
     case LaunchExecutor(appId, execId, appDesc, cores_, memory_, execSparkHome_) =>
       logInfo("Asked to launch executor %s/%d for %s".format(appId, execId, appDesc.name))
       val manager = new ExecutorRunner(
-        appId, execId, appDesc, cores_, memory_, self, workerId, ip, new File(execSparkHome_), workDir)
+        appId, execId, appDesc, cores_, memory_, self, workerId, ip, new File(execSparkHome_),
+        workDir, context.system, actorSystemUrl)
       executors(appId + "/" + execId) = manager
       manager.start()
       coresUsed += cores_
@@ -143,8 +141,18 @@ private[spark] class Worker(
           logInfo("Asked to kill unknown executor " + fullId)
       }
 
-    case Terminated(_) | RemoteClientDisconnected(_, _) | RemoteClientShutdown(_, _) =>
+    case Terminated(actorRef) if actorRef == master =>
       masterDisconnected()
+
+    case RemoteClientDisconnected(transport, address) =>
+      if (address == masterAddress || masterAddress == null) {
+        masterDisconnected()
+      }
+
+    case RemoteClientShutdown(transport, address) =>
+      if (address == masterAddress || masterAddress == null) {
+        masterDisconnected()
+      }
       
     case RequestWorkerState => {
       sender ! WorkerState(ip, port, workerId, executors.values.toList,
@@ -183,8 +191,10 @@ private[spark] object Worker {
     // The LocalSparkCluster runs multiple local sparkWorkerX actor systems
     val systemName = "sparkWorker" + workerNumber.map(_.toString).getOrElse("")
     val (actorSystem, boundPort) = AkkaUtils.createActorSystem(systemName, host, port)
-    val actor = actorSystem.actorOf(Props(new Worker(host, boundPort, webUiPort, cores, memory,
-      masterUrl, workDir)), name = "Worker")
+    val systemUrl = "akka://%s@%s:%s".format(systemName, host, boundPort)
+    val actor = actorSystem.actorOf(
+      Props(new Worker(host, boundPort, webUiPort, cores, memory, masterUrl, systemUrl, workDir)),
+      name = "Worker")
     (actorSystem, boundPort)
   }
 

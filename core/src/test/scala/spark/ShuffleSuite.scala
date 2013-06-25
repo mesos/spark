@@ -235,6 +235,25 @@ class ShuffleSuite extends FunSuite with ShouldMatchers with LocalSparkContext {
     assert(rdd.values.collect().toList === List("a", "b"))
   }
 
+  test("default partitioner uses partition size") {
+    sc = new SparkContext("local", "test")
+    // specify 2000 partitions
+    val a = sc.makeRDD(Array(1, 2, 3, 4), 2000)
+    // do a map, which loses the partitioner
+    val b = a.map(a => (a, (a * 2).toString))
+    // then a group by, and see we didn't revert to 2 partitions
+    val c = b.groupByKey()
+    assert(c.partitions.size === 2000)
+  }
+
+  test("default partitioner uses largest partitioner") {
+    sc = new SparkContext("local", "test")
+    val a = sc.makeRDD(Array((1, "a"), (2, "b")), 2)
+    val b = sc.makeRDD(Array((1, "a"), (2, "b")), 2000)
+    val c = a.join(b)
+    assert(c.partitions.size === 2000)
+  }
+
   test("subtract") {
     sc = new SparkContext("local", "test")
     val a = sc.parallelize(Array(1, 2, 3), 2)
@@ -253,12 +272,60 @@ class ShuffleSuite extends FunSuite with ShouldMatchers with LocalSparkContext {
     }
     // partitionBy so we have a narrow dependency
     val a = sc.parallelize(Array((1, "a"), (2, "b"), (3, "c"))).partitionBy(p)
-    println(sc.runJob(a, (i: Iterator[(Int, String)]) => i.toList).toList)
-    // more splits/no partitioner so a shuffle dependency 
+    // more partitions/no partitioner so a shuffle dependency 
     val b = sc.parallelize(Array((2, "b"), (3, "cc"), (4, "d")), 4)
     val c = a.subtract(b)
     assert(c.collect().toSet === Set((1, "a"), (3, "c")))
+    // Ideally we could keep the original partitioner...
+    assert(c.partitioner === None)
+  }
+
+  test("subtractByKey") {
+    sc = new SparkContext("local", "test")
+    val a = sc.parallelize(Array((1, "a"), (1, "a"), (2, "b"), (3, "c")), 2)
+    val b = sc.parallelize(Array((2, 20), (3, 30), (4, 40)), 4)
+    val c = a.subtractByKey(b)
+    assert(c.collect().toSet === Set((1, "a"), (1, "a")))
+    assert(c.partitions.size === a.partitions.size)
+  }
+
+  test("subtractByKey with narrow dependency") {
+    sc = new SparkContext("local", "test")
+    // use a deterministic partitioner
+    val p = new Partitioner() {
+      def numPartitions = 5
+      def getPartition(key: Any) = key.asInstanceOf[Int]
+    }
+    // partitionBy so we have a narrow dependency
+    val a = sc.parallelize(Array((1, "a"), (1, "a"), (2, "b"), (3, "c"))).partitionBy(p)
+    // more partitions/no partitioner so a shuffle dependency 
+    val b = sc.parallelize(Array((2, "b"), (3, "cc"), (4, "d")), 4)
+    val c = a.subtractByKey(b)
+    assert(c.collect().toSet === Set((1, "a"), (1, "a")))
     assert(c.partitioner.get === p)
+  }
+
+  test("foldByKey") {
+    sc = new SparkContext("local", "test")
+    val pairs = sc.parallelize(Array((1, 1), (1, 2), (1, 3), (1, 1), (2, 1)))
+    val sums = pairs.foldByKey(0)(_+_).collect()
+    assert(sums.toSet === Set((1, 7), (2, 1)))
+  }
+
+  test("foldByKey with mutable result type") {
+    sc = new SparkContext("local", "test")
+    val pairs = sc.parallelize(Array((1, 1), (1, 2), (1, 3), (1, 1), (2, 1)))
+    val bufs = pairs.mapValues(v => ArrayBuffer(v)).cache()
+    // Fold the values using in-place mutation
+    val sums = bufs.foldByKey(new ArrayBuffer[Int])(_ ++= _).collect()
+    assert(sums.toSet === Set((1, ArrayBuffer(1, 2, 3, 1)), (2, ArrayBuffer(1))))
+    // Check that the mutable objects in the original RDD were not changed
+    assert(bufs.collect().toSet === Set(
+      (1, ArrayBuffer(1)),
+      (1, ArrayBuffer(2)),
+      (1, ArrayBuffer(3)),
+      (1, ArrayBuffer(1)),
+      (2, ArrayBuffer(1))))
   }
 }
 

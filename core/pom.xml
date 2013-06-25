@@ -3,18 +3,22 @@
   <modelVersion>4.0.0</modelVersion>
   <parent>
     <groupId>org.spark-project</groupId>
-    <artifactId>parent</artifactId>
-    <version>0.7.0-SNAPSHOT</version>
+    <artifactId>spark-parent</artifactId>
+    <version>0.7.3-SNAPSHOT</version>
     <relativePath>../pom.xml</relativePath>
   </parent>
 
   <groupId>org.spark-project</groupId>
-  <artifactId>spark-core</artifactId>
+  <artifactId>spark-core_2.9.3</artifactId>
   <packaging>jar</packaging>
   <name>Spark Project Core</name>
   <url>http://spark-project.org/</url>
 
   <dependencies>
+    <dependency>
+      <groupId>org.apache.hadoop</groupId>
+      <artifactId>hadoop-core</artifactId>
+    </dependency>
     <dependency>
       <groupId>org.eclipse.jetty</groupId>
       <artifactId>jetty-server</artifactId>
@@ -73,7 +77,7 @@
     </dependency>
     <dependency>
       <groupId>cc.spray</groupId>
-      <artifactId>spray-json_${scala.version}</artifactId>
+      <artifactId>spray-json_2.9.2</artifactId>
     </dependency>
     <dependency>
       <groupId>org.tomdz.twirl</groupId>
@@ -81,13 +85,16 @@
     </dependency>
     <dependency>
       <groupId>com.github.scala-incubator.io</groupId>
-      <artifactId>scala-io-file_${scala.version}</artifactId>
+      <artifactId>scala-io-file_2.9.2</artifactId>
     </dependency>
     <dependency>
       <groupId>org.apache.mesos</groupId>
       <artifactId>mesos</artifactId>
     </dependency>
-
+    <dependency>
+      <groupId>log4j</groupId>
+      <artifactId>log4j</artifactId>
+    </dependency>
     <dependency>
       <groupId>org.scalatest</groupId>
       <artifactId>scalatest_${scala.version}</artifactId>
@@ -114,6 +121,7 @@
       <scope>test</scope>
     </dependency>
   </dependencies>
+
   <build>
     <outputDirectory>target/scala-${scala.version}/classes</outputDirectory>
     <testOutputDirectory>target/scala-${scala.version}/test-classes</testOutputDirectory>
@@ -130,14 +138,14 @@
             <configuration>
               <exportAntProperties>true</exportAntProperties>
               <tasks>
-                <property name="spark.classpath" refid="maven.test.classpath"/>
-                <property environment="env"/>
+                <property name="spark.classpath" refid="maven.test.classpath" />
+                <property environment="env" />
                 <fail message="Please set the SCALA_HOME (or SCALA_LIBRARY_PATH if scala is on the path) environment variables and retry.">
                   <condition>
                     <not>
                       <or>
-                        <isset property="env.SCALA_HOME"/>
-                        <isset property="env.SCALA_LIBRARY_PATH"/>
+                        <isset property="env.SCALA_HOME" />
+                        <isset property="env.SCALA_LIBRARY_PATH" />
                       </or>
                     </not>
                   </condition>
@@ -168,13 +176,11 @@
   <profiles>
     <profile>
       <id>hadoop1</id>
-      <dependencies>
-        <dependency>
-          <groupId>org.apache.hadoop</groupId>
-          <artifactId>hadoop-core</artifactId>
-          <scope>provided</scope>
-        </dependency>
-      </dependencies>
+      <activation>
+        <property>
+          <name>!hadoop.version</name>
+        </property>
+      </activation>
       <build>
         <plugins>
           <plugin>
@@ -189,47 +195,27 @@
                 </goals>
                 <configuration>
                   <sources>
-                    <source>src/main/scala</source>
                     <source>src/hadoop1/scala</source>
                   </sources>
                 </configuration>
               </execution>
-              <execution>
-                <id>add-scala-test-sources</id>
-                <phase>generate-test-sources</phase>
-                <goals>
-                  <goal>add-test-source</goal>
-                </goals>
-                <configuration>
-                  <sources>
-                    <source>src/test/scala</source>
-                  </sources>
-                </configuration>
-              </execution>
             </executions>
-          </plugin>
-          <plugin>
-            <groupId>org.apache.maven.plugins</groupId>
-            <artifactId>maven-jar-plugin</artifactId>
-            <configuration>
-              <classifier>hadoop1</classifier>
-            </configuration>
           </plugin>
         </plugins>
       </build>
     </profile>
     <profile>
       <id>hadoop2</id>
+      <activation>
+        <property>
+          <name>hadoop.version</name>
+          <value>2</value>
+        </property>
+      </activation>
       <dependencies>
         <dependency>
           <groupId>org.apache.hadoop</groupId>
-          <artifactId>hadoop-core</artifactId>
-          <scope>provided</scope>
-        </dependency>
-        <dependency>
-          <groupId>org.apache.hadoop</groupId>
           <artifactId>hadoop-client</artifactId>
-          <scope>provided</scope>
         </dependency>
       </dependencies>
       <build>
@@ -246,31 +232,11 @@
                 </goals>
                 <configuration>
                   <sources>
-                    <source>src/main/scala</source>
                     <source>src/hadoop2/scala</source>
                   </sources>
                 </configuration>
               </execution>
-              <execution>
-                <id>add-scala-test-sources</id>
-                <phase>generate-test-sources</phase>
-                <goals>
-                  <goal>add-test-source</goal>
-                </goals>
-                <configuration>
-                  <sources>
-                    <source>src/test/scala</source>
-                  </sources>
-                </configuration>
-              </execution>
             </executions>
-          </plugin>
-          <plugin>
-            <groupId>org.apache.maven.plugins</groupId>
-            <artifactId>maven-jar-plugin</artifactId>
-            <configuration>
-              <classifier>hadoop2</classifier>
-            </configuration>
           </plugin>
         </plugins>
       </build>

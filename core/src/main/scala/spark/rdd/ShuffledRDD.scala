@@ -16,7 +16,7 @@ private[spark] class ShuffledRDDPartition(val idx: Int) extends Partition {
  * @tparam V the value class.
  */
 class ShuffledRDD[K, V](
-    prev: RDD[(K, V)],
+    @transient prev: RDD[(K, V)],
     part: Partitioner)
   extends RDD[(K, V)](prev.context, List(new ShuffleDependency(prev, part))) {
 
@@ -28,6 +28,6 @@ class ShuffledRDD[K, V](
 
   override def compute(split: Partition, context: TaskContext): Iterator[(K, V)] = {
     val shuffledId = dependencies.head.asInstanceOf[ShuffleDependency[K, V]].shuffleId
-    SparkEnv.get.shuffleFetcher.fetch[K, V](shuffledId, split.index)
+    SparkEnv.get.shuffleFetcher.fetch[K, V](shuffledId, split.index, context.taskMetrics)
   }
 }

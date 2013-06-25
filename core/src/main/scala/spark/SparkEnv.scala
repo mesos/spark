@@ -1,7 +1,9 @@
 package spark
 
-import akka.actor.ActorSystem
-import akka.actor.ActorSystemImpl
+import collection.mutable
+import serializer.Serializer
+
+import akka.actor.{Actor, ActorRef, Props, ActorSystemImpl, ActorSystem}
 import akka.remote.RemoteActorRefProvider
 
 import serializer.Serializer
@@ -10,6 +12,7 @@ import spark.storage.BlockManager
 import spark.storage.BlockManagerMaster
 import spark.network.ConnectionManager
 import spark.util.AkkaUtils
+import spark.api.python.PythonWorkerFactory
 
 /**
  * Holds all the runtime environment objects for a running Spark instance (either master or worker),
@@ -33,7 +36,10 @@ class SparkEnv (
     val sparkFilesDir: String
   ) {
 
+  private val pythonWorkers = mutable.HashMap[(String, Map[String, String]), PythonWorkerFactory]()
+
   def stop() {
+    pythonWorkers.foreach { case(key, worker) => worker.stop() }
     httpFileServer.stop()
     mapOutputTracker.stop()
     shuffleFetcher.stop()
@@ -44,6 +50,12 @@ class SparkEnv (
     // Unfortunately Akka's awaitTermination doesn't actually wait for the Netty server to shut
     // down, but let's call it anyway in case it gets fixed in a later release
     actorSystem.awaitTermination()
+  }
+
+  def createPythonWorker(pythonExec: String, envVars: Map[String, String]): java.net.Socket = {
+    synchronized {
+      pythonWorkers.getOrElseUpdate((pythonExec, envVars), new PythonWorkerFactory(pythonExec, envVars)).create()
+    }
   }
 }
 
@@ -83,11 +95,23 @@ object SparkEnv extends Logging {
     }
 
     val serializer = instantiateClass[Serializer]("spark.serializer", "spark.JavaSerializer")
+    
+    def registerOrLookup(name: String, newActor: => Actor): ActorRef = {
+      if (isDriver) {
+        logInfo("Registering " + name)
+        actorSystem.actorOf(Props(newActor), name = name)
+      } else {
+        val driverIp: String = System.getProperty("spark.driver.host", "localhost")
+        val driverPort: Int = System.getProperty("spark.driver.port", "7077").toInt
+        val url = "akka://spark@%s:%s/user/%s".format(driverIp, driverPort, name)
+        logInfo("Connecting to " + name + ": " + url)
+        actorSystem.actorFor(url)
+      }
+    }
 
-    val driverIp: String = System.getProperty("spark.driver.host", "localhost")
-    val driverPort: Int = System.getProperty("spark.driver.port", "7077").toInt
-    val blockManagerMaster = new BlockManagerMaster(
-      actorSystem, isDriver, isLocal, driverIp, driverPort)
+    val blockManagerMaster = new BlockManagerMaster(registerOrLookup(
+      "BlockManagerMaster",
+      new spark.storage.BlockManagerMasterActor(isLocal)))
     val blockManager = new BlockManager(executorId, actorSystem, blockManagerMaster, serializer)
 
     val connectionManager = blockManager.connectionManager
@@ -99,7 +123,12 @@ object SparkEnv extends Logging {
 
     val cacheManager = new CacheManager(blockManager)
 
-    val mapOutputTracker = new MapOutputTracker(actorSystem, isDriver)
+    // Have to assign trackerActor after initialization as MapOutputTrackerActor
+    // requires the MapOutputTracker itself
+    val mapOutputTracker = new MapOutputTracker()
+    mapOutputTracker.trackerActor = registerOrLookup(
+      "MapOutputTracker",
+      new MapOutputTrackerActor(mapOutputTracker))
 
     val shuffleFetcher = instantiateClass[ShuffleFetcher](
       "spark.shuffle.fetcher", "spark.BlockStoreShuffleFetcher")
@@ -137,4 +166,5 @@ object SparkEnv extends Logging {
       httpFileServer,
       sparkFilesDir)
   }
+  
 }

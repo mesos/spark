@@ -2,11 +2,17 @@
 <project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
   <modelVersion>4.0.0</modelVersion>
   <groupId>org.spark-project</groupId>
-  <artifactId>parent</artifactId>
-  <version>0.7.0-SNAPSHOT</version>
+  <artifactId>spark-parent</artifactId>
+  <version>0.7.3-SNAPSHOT</version>
   <packaging>pom</packaging>
   <name>Spark Project Parent POM</name>
   <url>http://spark-project.org/</url>
+  <description>
+      Spark is a MapReduce-like cluster computing framework designed for
+      low-latency iterative jobs and interactive use from an interpreter.
+      It provides clean, language-integrated APIs in Scala, Java, and Python,
+      with a rich array of parallel operators.
+  </description>
   <licenses>
     <license>
       <name>BSD License</name>
@@ -16,6 +22,7 @@
   </licenses>
   <scm>
     <connection>scm:git:git@github.com:mesos/spark.git</connection>
+    <developerConnection>scm:git:git@github.com:mesos/spark.git</developerConnection>
     <url>scm:git:git@github.com:mesos/spark.git</url>
   </scm>
   <developers>
@@ -37,6 +44,12 @@
     <maven>3.0.0</maven>
   </prerequisites>
 
+  <parent>
+    <groupId>org.sonatype.oss</groupId>
+    <artifactId>oss-parent</artifactId>
+    <version>7</version>
+  </parent>
+
   <modules>
     <module>core</module>
     <module>bagel</module>
@@ -51,13 +64,17 @@
     <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
 
     <java.version>1.5</java.version>
-    <scala.version>2.9.2</scala.version>
+    <scala.version>2.9.3</scala.version>
     <mesos.version>0.9.0-incubating</mesos.version>
     <akka.version>2.0.3</akka.version>
     <spray.version>1.0-M2.1</spray.version>
     <spray.json.version>1.1.1</spray.json.version>
     <slf4j.version>1.6.1</slf4j.version>
     <cdh.version>4.1.2</cdh.version>
+    <log4j.version>1.2.17</log4j.version>
+
+    <PermGen>64m</PermGen>
+    <MaxPermGen>512m</MaxPermGen>
   </properties>
 
   <repositories>
@@ -156,6 +173,11 @@
   <dependencyManagement>
     <dependencies>
       <dependency>
+        <groupId>org.apache.hadoop</groupId>
+        <artifactId>hadoop-core</artifactId>
+        <version>1.0.4</version>
+      </dependency>
+      <dependency>
         <groupId>org.eclipse.jetty</groupId>
         <artifactId>jetty-server</artifactId>
         <version>7.5.3.v20111011</version>
@@ -198,7 +220,7 @@
       <dependency>
         <groupId>de.javakaffee</groupId>
         <artifactId>kryo-serializers</artifactId>
-        <version>0.20</version>
+        <version>0.22</version>
       </dependency>
       <dependency>
         <groupId>com.typesafe.akka</groupId>
@@ -237,7 +259,7 @@
       </dependency>
       <dependency>
         <groupId>cc.spray</groupId>
-        <artifactId>spray-json_${scala.version}</artifactId>
+        <artifactId>spray-json_2.9.2</artifactId>
         <version>${spray.json.version}</version>
       </dependency>
       <dependency>
@@ -247,7 +269,7 @@
       </dependency>
       <dependency>
         <groupId>com.github.scala-incubator.io</groupId>
-        <artifactId>scala-io-file_${scala.version}</artifactId>
+        <artifactId>scala-io-file_2.9.2</artifactId>
         <version>0.4.1</version>
       </dependency>
       <dependency>
@@ -255,7 +277,6 @@
         <artifactId>mesos</artifactId>
         <version>${mesos.version}</version>
       </dependency>
-
       <dependency>
         <groupId>org.scala-lang</groupId>
         <artifactId>scala-compiler</artifactId>
@@ -266,11 +287,15 @@
         <artifactId>jline</artifactId>
         <version>${scala.version}</version>
       </dependency>
-
+      <dependency>
+        <groupId>log4j</groupId>
+        <artifactId>log4j</artifactId>
+        <version>${log4j.version}</version>
+      </dependency>
       <dependency>
         <groupId>org.scalatest</groupId>
         <artifactId>scalatest_${scala.version}</artifactId>
-        <version>1.8</version>
+        <version>1.9.1</version>
         <scope>test</scope>
       </dependency>
       <dependency>
@@ -282,7 +307,7 @@
       <dependency>
         <groupId>org.scalacheck</groupId>
         <artifactId>scalacheck_${scala.version}</artifactId>
-        <version>1.9</version>
+        <version>1.10.0</version>
         <scope>test</scope>
       </dependency>
       <dependency>
@@ -374,6 +399,8 @@
             <jvmArgs>
               <jvmArg>-Xms64m</jvmArg>
               <jvmArg>-Xmx1024m</jvmArg>
+              <jvmArg>-XX:PermSize=${PermGen}</jvmArg>
+              <jvmArg>-XX:MaxPermSize=${MaxPermGen}</jvmArg>
             </jvmArgs>
             <javacArgs>
               <javacArg>-source</javacArg>
@@ -424,6 +451,11 @@
         </plugin>
         <plugin>
           <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-javadoc-plugin</artifactId>
+          <version>2.9</version>
+        </plugin>
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
           <artifactId>maven-jar-plugin</artifactId>
           <version>2.4</version>
         </plugin>
@@ -452,6 +484,16 @@
               </goals>
             </execution>
           </executions>
+        </plugin>
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-release-plugin</artifactId>
+          <version>2.4.1</version>
+        </plugin>
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-deploy-plugin</artifactId>
+          <version>2.7</version>
         </plugin>
       </plugins>
     </pluginManagement>
@@ -499,32 +541,34 @@
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-source-plugin</artifactId>
       </plugin>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-release-plugin</artifactId>
+        <configuration>
+          <localCheckout>true</localCheckout>
+          <pushChanges>false</pushChanges>
+        </configuration>
+      </plugin>
     </plugins>
   </build>
 
   <profiles>
     <profile>
       <id>hadoop1</id>
-
-      <properties>
-        <hadoop.major.version>1</hadoop.major.version>
-      </properties>
-      <dependencyManagement>
-        <dependencies>
-          <dependency>
-            <groupId>org.apache.hadoop</groupId>
-            <artifactId>hadoop-core</artifactId>
-            <version>1.0.3</version>
-          </dependency>
-        </dependencies>
-      </dependencyManagement>
+      <activation>
+        <property>
+          <name>!hadoop.version</name>
+        </property>
+      </activation>
     </profile>
-
     <profile>
       <id>hadoop2</id>
-      <properties>
-        <hadoop.major.version>2</hadoop.major.version>
-      </properties>
+      <activation>
+        <property>
+          <name>hadoop.version</name>
+          <value>2</value>
+        </property>
+      </activation>
       <dependencyManagement>
         <dependencies>
           <dependency>
@@ -547,6 +591,12 @@
             <groupId>org.apache.avro</groupId>
             <artifactId>avro-ipc</artifactId>
             <version>1.7.1.cloudera.2</version>
+            <exclusions>
+              <exclusion>
+                <groupId>org.jboss.netty</groupId>
+                <artifactId>netty</artifactId>
+              </exclusion>
+            </exclusions>
           </dependency>
         </dependencies>
       </dependencyManagement>

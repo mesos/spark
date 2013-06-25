@@ -1,5 +1,6 @@
 package spark
 
+import java.nio.ByteBuffer
 import java.util.{Date, HashMap => JHashMap}
 import java.text.SimpleDateFormat
 
@@ -23,6 +24,7 @@ import spark.partial.BoundedDouble
 import spark.partial.PartialResult
 import spark.rdd._
 import spark.SparkContext._
+import spark.Partitioner._
 
 /**
  * Extra functions available on RDDs of (key, value) pairs through an implicit conversion.
@@ -60,8 +62,7 @@ class PairRDDFunctions[K: ClassManifest, V: ClassManifest](
         throw new SparkException("Default partitioner cannot partition array keys.")
       }
     }
-    val aggregator =
-      new Aggregator[K, V, C](createCombiner, mergeValue, mergeCombiners)
+    val aggregator = new Aggregator[K, V, C](createCombiner, mergeValue, mergeCombiners)
     if (self.partitioner == Some(partitioner)) {
       self.mapPartitions(aggregator.combineValuesByKey(_), true)
     } else if (mapSideCombine) {
@@ -85,6 +86,42 @@ class PairRDDFunctions[K: ClassManifest, V: ClassManifest](
       mergeCombiners: (C, C) => C,
       numPartitions: Int): RDD[(K, C)] = {
     combineByKey(createCombiner, mergeValue, mergeCombiners, new HashPartitioner(numPartitions))
+  }
+
+  /**
+   * Merge the values for each key using an associative function and a neutral "zero value" which may
+   * be added to the result an arbitrary number of times, and must not change the result (e.g., Nil for
+   * list concatenation, 0 for addition, or 1 for multiplication.).
+   */
+  def foldByKey(zeroValue: V, partitioner: Partitioner)(func: (V, V) => V): RDD[(K, V)] = {
+    // Serialize the zero value to a byte array so that we can get a new clone of it on each key
+    val zeroBuffer = SparkEnv.get.closureSerializer.newInstance().serialize(zeroValue)
+    val zeroArray = new Array[Byte](zeroBuffer.limit)
+    zeroBuffer.get(zeroArray)
+
+    // When deserializing, use a lazy val to create just one instance of the serializer per task
+    lazy val cachedSerializer = SparkEnv.get.closureSerializer.newInstance()
+    def createZero() = cachedSerializer.deserialize[V](ByteBuffer.wrap(zeroArray))
+
+    combineByKey[V]((v: V) => func(createZero(), v), func, func, partitioner)
+  }
+
+  /**
+   * Merge the values for each key using an associative function and a neutral "zero value" which may
+   * be added to the result an arbitrary number of times, and must not change the result (e.g., Nil for
+   * list concatenation, 0 for addition, or 1 for multiplication.).
+   */
+  def foldByKey(zeroValue: V, numPartitions: Int)(func: (V, V) => V): RDD[(K, V)] = {
+    foldByKey(zeroValue, new HashPartitioner(numPartitions))(func)
+  }
+
+  /**
+   * Merge the values for each key using an associative function and a neutral "zero value" which may
+   * be added to the result an arbitrary number of times, and must not change the result (e.g., Nil for
+   * list concatenation, 0 for addition, or 1 for multiplication.).
+   */
+  def foldByKey(zeroValue: V)(func: (V, V) => V): RDD[(K, V)] = {
+    foldByKey(zeroValue, defaultPartitioner(self))(func)
   }
 
   /**
@@ -248,8 +285,8 @@ class PairRDDFunctions[K: ClassManifest, V: ClassManifest](
   }
 
   /**
-   * Simplified version of combineByKey that hash-partitions the resulting RDD using the default
-   * parallelism level.
+   * Simplified version of combineByKey that hash-partitions the resulting RDD using the
+   * existing partitioner/parallelism level.
    */
   def combineByKey[C](createCombiner: V => C, mergeValue: (C, V) => C, mergeCombiners: (C, C) => C)
       : RDD[(K, C)] = {
@@ -259,7 +296,8 @@ class PairRDDFunctions[K: ClassManifest, V: ClassManifest](
   /**
    * Merge the values for each key using an associative reduce function. This will also perform
    * the merging locally on each mapper before sending results to a reducer, similarly to a
-   * "combiner" in MapReduce. Output will be hash-partitioned with the default parallelism level.
+   * "combiner" in MapReduce. Output will be hash-partitioned with the existing partitioner/
+   * parallelism level.
    */
   def reduceByKey(func: (V, V) => V): RDD[(K, V)] = {
     reduceByKey(defaultPartitioner(self), func)
@@ -267,7 +305,7 @@ class PairRDDFunctions[K: ClassManifest, V: ClassManifest](
 
   /**
    * Group the values for each key in the RDD into a single sequence. Hash-partitions the
-   * resulting RDD with the default parallelism level.
+   * resulting RDD with the existing partitioner/parallelism level.
    */
   def groupByKey(): RDD[(K, Seq[V])] = {
     groupByKey(defaultPartitioner(self))
@@ -295,7 +333,7 @@ class PairRDDFunctions[K: ClassManifest, V: ClassManifest](
    * Perform a left outer join of `this` and `other`. For each element (k, v) in `this`, the
    * resulting RDD will either contain all pairs (k, (v, Some(w))) for w in `other`, or the
    * pair (k, (v, None)) if no elements in `other` have key k. Hash-partitions the output
-   * using the default level of parallelism.
+   * using the existing partitioner/parallelism level.
    */
   def leftOuterJoin[W](other: RDD[(K, W)]): RDD[(K, (V, Option[W]))] = {
     leftOuterJoin(other, defaultPartitioner(self, other))
@@ -315,7 +353,7 @@ class PairRDDFunctions[K: ClassManifest, V: ClassManifest](
    * Perform a right outer join of `this` and `other`. For each element (k, w) in `other`, the
    * resulting RDD will either contain all pairs (k, (Some(v), w)) for v in `this`, or the
    * pair (k, (None, w)) if no elements in `this` have key k. Hash-partitions the resulting
-   * RDD using the default parallelism level.
+   * RDD using the existing partitioner/parallelism level.
    */
   def rightOuterJoin[W](other: RDD[(K, W)]): RDD[(K, (Option[V], W))] = {
     rightOuterJoin(other, defaultPartitioner(self, other))
@@ -439,15 +477,21 @@ class PairRDDFunctions[K: ClassManifest, V: ClassManifest](
   }
 
   /**
-   * Choose a partitioner to use for a cogroup-like operation between a number of RDDs. If any of
-   * the RDDs already has a partitioner, choose that one, otherwise use a default HashPartitioner.
+   * Return an RDD with the pairs from `this` whose keys are not in `other`.
+   * 
+   * Uses `this` partitioner/partition size, because even if `other` is huge, the resulting
+   * RDD will be <= us.
    */
-  def defaultPartitioner(rdds: RDD[_]*): Partitioner = {
-    for (r <- rdds if r.partitioner != None) {
-      return r.partitioner.get
-    }
-    return new HashPartitioner(self.context.defaultParallelism)
-  }
+  def subtractByKey[W: ClassManifest](other: RDD[(K, W)]): RDD[(K, V)] =
+    subtractByKey(other, self.partitioner.getOrElse(new HashPartitioner(self.partitions.size)))
+
+  /** Return an RDD with the pairs from `this` whose keys are not in `other`. */
+  def subtractByKey[W: ClassManifest](other: RDD[(K, W)], numPartitions: Int): RDD[(K, V)] =
+    subtractByKey(other, new HashPartitioner(numPartitions))
+
+  /** Return an RDD with the pairs from `this` whose keys are not in `other`. */
+  def subtractByKey[W: ClassManifest](other: RDD[(K, W)], p: Partitioner): RDD[(K, V)] =
+    new SubtractedRDD[K, V, W](self, other, p)
 
   /**
    * Return the list of values in the RDD for key `key`. This operation is done efficiently if the
@@ -535,6 +579,7 @@ class PairRDDFunctions[K: ClassManifest, V: ClassManifest](
     val jobCommitter = jobFormat.getOutputCommitter(jobTaskContext)
     jobCommitter.setupJob(jobTaskContext)
     val count = self.context.runJob(self, writeShard _).sum
+    jobCommitter.commitJob(jobTaskContext)
     jobCommitter.cleanupJob(jobTaskContext)
   }
 
@@ -602,6 +647,7 @@ class PairRDDFunctions[K: ClassManifest, V: ClassManifest](
     }
 
     self.context.runJob(self, writeToFile _)
+    writer.commitJob()
     writer.cleanup()
   }
 

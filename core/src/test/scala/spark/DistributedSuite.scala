@@ -1,5 +1,6 @@
 package spark
 
+import network.ConnectionManagerId
 import org.scalatest.FunSuite
 import org.scalatest.BeforeAndAfter
 import org.scalatest.matchers.ShouldMatchers
@@ -13,7 +14,10 @@ import com.google.common.io.Files
 import scala.collection.mutable.ArrayBuffer
 
 import SparkContext._
-import storage.StorageLevel
+import storage.{GetBlock, BlockManagerWorker, StorageLevel}
+
+class NotSerializableClass
+class NotSerializableExn(val notSer: NotSerializableClass) extends Throwable() {}
 
 class DistributedSuite extends FunSuite with ShouldMatchers with BeforeAndAfter with LocalSparkContext {
 
@@ -22,6 +26,24 @@ class DistributedSuite extends FunSuite with ShouldMatchers with BeforeAndAfter 
   after {
     System.clearProperty("spark.reducer.maxMbInFlight")
     System.clearProperty("spark.storage.memoryFraction")
+  }
+
+  test("task throws not serializable exception") {
+    // Ensures that executors do not crash when an exn is not serializable. If executors crash,
+    // this test will hang. Correct behavior is that executors don't crash but fail tasks
+    // and the scheduler throws a SparkException.
+
+    // numSlaves must be less than numPartitions
+    val numSlaves = 3
+    val numPartitions = 10
+
+    sc = new SparkContext("local-cluster[%s,1,512]".format(numSlaves), "test")
+    val data = sc.parallelize(1 to 100, numPartitions).
+      map(x => throw new NotSerializableExn(new NotSerializableClass))
+    intercept[SparkException] {
+      data.count()
+    }
+    resetSparkContext()
   }
 
   test("local-cluster format") {
@@ -140,9 +162,22 @@ class DistributedSuite extends FunSuite with ShouldMatchers with BeforeAndAfter 
   test("caching in memory and disk, serialized, replicated") {
     sc = new SparkContext(clusterUrl, "test")
     val data = sc.parallelize(1 to 1000, 10).persist(StorageLevel.MEMORY_AND_DISK_SER_2)
+
     assert(data.count() === 1000)
     assert(data.count() === 1000)
     assert(data.count() === 1000)
+
+    // Get all the locations of the first partition and try to fetch the partitions
+    // from those locations.
+    val blockIds = data.partitions.indices.map(index => "rdd_%d_%d".format(data.id, index)).toArray
+    val blockId = blockIds(0)
+    val blockManager = SparkEnv.get.blockManager
+    blockManager.master.getLocations(blockId).foreach(id => {
+      val bytes = BlockManagerWorker.syncGetBlock(
+        GetBlock(blockId), ConnectionManagerId(id.ip, id.port))
+      val deserialized = blockManager.dataDeserialize(blockId, bytes).asInstanceOf[Iterator[Int]].toList
+      assert(deserialized === (1 to 100).toList)
+    })
   }
 
   test("compute without caching when no partitions fit in memory") {
@@ -237,6 +272,19 @@ class DistributedSuite extends FunSuite with ShouldMatchers with BeforeAndAfter 
       val data2 = sc.parallelize(Seq(true, true), 2).persist(StorageLevel.MEMORY_ONLY_2)
       assert(data2.count === 2)
     }
+  }
+
+  test("job should fail if TaskResult exceeds Akka frame size") {
+    // We must use local-cluster mode since results are returned differently
+    // when running under LocalScheduler:
+    sc = new SparkContext("local-cluster[1,1,512]", "test")
+    val akkaFrameSize =
+      sc.env.actorSystem.settings.config.getBytes("akka.remote.netty.message-frame-size").toInt
+    val rdd = sc.parallelize(Seq(1)).map{x => new Array[Byte](akkaFrameSize)}
+    val exception = intercept[SparkException] {
+      rdd.reduce((x, y) => x)
+    }
+    exception.getMessage should endWith("result exceeded Akka frame size")
   }
 }
 

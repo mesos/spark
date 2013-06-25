@@ -17,6 +17,9 @@ case class RegisteredExecutor(sparkProperties: Seq[(String, String)])
 private[spark]
 case class RegisterExecutorFailed(message: String) extends StandaloneClusterMessage
 
+private[spark]
+case object StopExecutor extends StandaloneClusterMessage
+
 // Executors to driver
 private[spark]
 case class RegisterExecutor(executorId: String, host: String, cores: Int)

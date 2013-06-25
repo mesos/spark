@@ -27,10 +27,10 @@ private[spark] class SparkDeploySchedulerBackend(
     val driverUrl = "akka://spark@%s:%s/user/%s".format(
       System.getProperty("spark.driver.host"), System.getProperty("spark.driver.port"),
       StandaloneSchedulerBackend.ACTOR_NAME)
-    val args = Seq(driverUrl, "{{EXECUTOR_ID}}", "{{HOSTNAME}}", "{{CORES}}")
+    val args = Seq(driverUrl, "{{WORKER_URL}}", "{{EXECUTOR_ID}}", "{{HOSTNAME}}", "{{CORES}}")
     val command = Command("spark.executor.StandaloneExecutorBackend", args, sc.executorEnvs)
     val sparkHome = sc.getSparkHome().getOrElse(
-      throw new IllegalArgumentException("must supply spark home for spark standalone"))
+      throw new IllegalArgumentException("Must supply Spark home for Spark standalone"))
     val appDesc = new ApplicationDescription(appName, maxCores, executorMemory, command, sparkHome)
 
     client = new Client(sc.env.actorSystem, master, appDesc, this)
