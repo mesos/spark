@@ -118,7 +118,7 @@ object SparkBuild extends Build {
     publishLocalBoth <<= Seq(publishLocal in MavenCompile, publishLocal).dependOn
   )
 
-  val slf4jVersion = "1.6.1"
+  val slf4jVersion = "1.7.2"
 
   val excludeJackson = ExclusionRule(organization = "org.codehaus.jackson")
   val excludeNetty = ExclusionRule(organization = "org.jboss.netty")
