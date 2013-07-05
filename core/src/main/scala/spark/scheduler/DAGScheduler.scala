@@ -716,6 +716,10 @@ class DAGScheduler(
     sizeBefore = pendingTasks.size
     pendingTasks.clearOldValues(cleanupTime)
     logInfo("pendingTasks " + sizeBefore + " --> " + pendingTasks.size)
+
+    sizeBefore = stageToInfos.size
+    stageToInfos.clearOldValues(cleanupTime)
+    logInfo("stageToInfos " + sizeBefore + " --> " + stageToInfos.size)
   }
 
   def stop() {
