@@ -12,6 +12,7 @@ import spark.streaming.receivers.ReceiverSupervisorStrategy
 import spark.streaming.receivers.ZeroMQReceiver
 import spark.storage.StorageLevel
 import spark.util.MetadataCleaner
+import spark.streaming.input.KafkaFunctions
 import spark.streaming.receivers.ActorReceiver
 
 import scala.collection.mutable.Queue
@@ -190,7 +191,7 @@ class StreamingContext private (
   def actorStream[T: ClassManifest](
       props: Props,
       name: String,
-      storageLevel: StorageLevel = StorageLevel.MEMORY_ONLY_SER_2,
+      storageLevel: StorageLevel = StorageLevel.MEMORY_AND_DISK_SER_2,
       supervisorStrategy: SupervisorStrategy = ReceiverSupervisorStrategy.defaultStrategy
     ): DStream[T] = {
     networkStream(new ActorReceiver[T](props, name, storageLevel, supervisorStrategy))
@@ -210,50 +211,12 @@ class StreamingContext private (
   def zeroMQStream[T: ClassManifest](
       publisherUrl:String,
       subscribe: Subscribe,
-      bytesToObjects: Seq[Seq[Byte]] ⇒ Iterator[T],
-      storageLevel: StorageLevel = StorageLevel.MEMORY_ONLY_SER_2,
+      bytesToObjects: Seq[Seq[Byte]] => Iterator[T],
+      storageLevel: StorageLevel = StorageLevel.MEMORY_AND_DISK_SER_2,
       supervisorStrategy: SupervisorStrategy = ReceiverSupervisorStrategy.defaultStrategy
     ): DStream[T] = {
     actorStream(Props(new ZeroMQReceiver(publisherUrl,subscribe,bytesToObjects)),
         "ZeroMQReceiver", storageLevel, supervisorStrategy)
-  }
-
-  /**
-   * Create an input stream that pulls messages from a Kafka Broker.
-   * @param zkQuorum Zookeper quorum (hostname:port,hostname:port,..).
-   * @param groupId The group id for this consumer.
-   * @param topics Map of (topic_name -> numPartitions) to consume. Each partition is consumed
-   *               in its own thread.
-   * @param storageLevel  Storage level to use for storing the received objects
-   *                      (default: StorageLevel.MEMORY_AND_DISK_SER_2)
-   */
-  def kafkaStream(
-      zkQuorum: String,
-      groupId: String,
-      topics: Map[String, Int],
-      storageLevel: StorageLevel = StorageLevel.MEMORY_ONLY_SER_2
-    ): DStream[String] = {
-    val kafkaParams = Map[String, String](
-      "zk.connect" -> zkQuorum, "groupid" -> groupId, "zk.connectiontimeout.ms" -> "10000")
-    kafkaStream[String, kafka.serializer.StringDecoder](kafkaParams, topics, storageLevel)
-  }
-
-  /**
-   * Create an input stream that pulls messages from a Kafka Broker.
-   * @param kafkaParams Map of kafka configuration paramaters.
-   *                    See: http://kafka.apache.org/configuration.html
-   * @param topics Map of (topic_name -> numPartitions) to consume. Each partition is consumed
-   *               in its own thread.
-   * @param storageLevel  Storage level to use for storing the received objects
-   */
-  def kafkaStream[T: ClassManifest, D <: kafka.serializer.Decoder[_]: Manifest](
-      kafkaParams: Map[String, String],
-      topics: Map[String, Int],
-      storageLevel: StorageLevel
-    ): DStream[T] = {
-    val inputStream = new KafkaInputDStream[T, D](this, kafkaParams, topics, storageLevel)
-    registerInputStream(inputStream)
-    inputStream
   }
 
   /**
@@ -513,6 +476,8 @@ object StreamingContext {
   implicit def toPairDStreamFunctions[K: ClassManifest, V: ClassManifest](stream: DStream[(K,V)]) = {
     new PairDStreamFunctions[K, V](stream)
   }
+
+  implicit def toKafkaFunctions(sc: StreamingContext): KafkaFunctions = new KafkaFunctions(sc)
 
   protected[streaming] def createNewSparkContext(
       master: String,

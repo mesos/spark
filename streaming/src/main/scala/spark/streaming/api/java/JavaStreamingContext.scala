@@ -124,7 +124,7 @@ class JavaStreamingContext(val ssc: StreamingContext) {
     implicit val cmt: ClassManifest[String] =
       implicitly[ClassManifest[AnyRef]].asInstanceOf[ClassManifest[String]]
     ssc.kafkaStream(zkQuorum, groupId, Map(topics.mapValues(_.intValue()).toSeq: _*),
-      StorageLevel.MEMORY_ONLY_SER_2)
+      StorageLevel.MEMORY_AND_DISK_SER_2)
   }
 
   /**
@@ -375,7 +375,7 @@ class JavaStreamingContext(val ssc: StreamingContext) {
   def twitterStream(): JavaDStream[Status] = {
     ssc.twitterStream()
   }
-  
+
   /**
    * Create an input stream with any arbitrary user implemented actor receiver.
    * @param props Props object defining creation of the actor
@@ -451,7 +451,7 @@ class JavaStreamingContext(val ssc: StreamingContext) {
   def zeroMQStream[T](
       publisherUrl:String,
       subscribe: Subscribe,
-      bytesToObjects: Seq[Seq[Byte]] ⇒ Iterator[T],
+      bytesToObjects: Seq[Seq[Byte]] => Iterator[T],
       storageLevel: StorageLevel,
       supervisorStrategy: SupervisorStrategy
     ): JavaDStream[T] = {
