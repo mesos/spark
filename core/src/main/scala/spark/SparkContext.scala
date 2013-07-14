@@ -507,10 +507,15 @@ class SparkContext(
    * filesystems), or an HTTP, HTTPS or FTP URI.
    */
   def addJar(path: String) {
-    val uri = new URI(path)
-    val key = uri.getScheme match {
-      case null | "file" => env.httpFileServer.addJar(new File(uri.getPath))
-      case _ => path
+    var key = ""
+    if (path.contains("\\")) {
+      key = env.httpFileServer.addJar(new File(path))
+    } else {
+      val uri = new URI(path)
+      key = uri.getScheme match {
+        case null | "file" => env.httpFileServer.addJar(new File(uri.getPath))
+        case _ => path
+      }
     }
     addedJars(key) = System.currentTimeMillis
     logInfo("Added JAR " + path + " at " + key + " with timestamp " + addedJars(key))

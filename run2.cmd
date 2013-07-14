@@ -8,6 +8,12 @@ set FWDIR=%~dp0
 rem Export this as SPARK_HOME
 set SPARK_HOME=%FWDIR%
 
+rem Add JARs for spark-shell
+if "x%ADD_JARS%"=="x" goto no_add_jars
+  echo Adding JARs to classpath: %ADD_JARS%
+  set SPARK_CLASSPATH=%SPARK_CLASSPATH%;%ADD_JARS:,=;%
+:no_add_jars
+
 rem Load environment variables from conf\spark-env.cmd, if it exists
 if exist "%FWDIR%conf\spark-env.cmd" call "%FWDIR%conf\spark-env.cmd"
 
