@@ -1,4 +1,9 @@
 #!/bin/sh
 FWDIR="`dirname $0`"
 export SPARK_LAUNCH_WITH_SCALA=1
+if [ -n $ADD_JARS ]; then
+  echo "Adding JARs to classpath: $ADD_JARS"
+  SPARK_CLASSPATH+=:`echo $ADD_JARS | tr , :`
+  export SPARK_CLASSPATH
+fi
 exec $FWDIR/run spark.repl.Main "$@"
