@@ -35,7 +35,7 @@ object SparkBuild extends Build {
 
   def sharedSettings = Defaults.defaultSettings ++ Seq(
     organization := "org.spark-project",
-    version := "0.7.3",
+    version := "0.7.4-SNAPSHOT",
     scalaVersion := "2.9.3",
     scalacOptions := Seq("-unchecked", "-optimize", "-deprecation", "-target:jvm-1.5"),
     javacOptions := Seq("-source", "1.5", "-target", "1.5"),
