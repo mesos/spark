@@ -53,6 +53,7 @@ if exist "%FWDIR%conf\java-opts.cmd" call "%FWDIR%conf\java-opts.cmd"
 set CORE_DIR=%FWDIR%core
 set REPL_DIR=%FWDIR%repl
 set EXAMPLES_DIR=%FWDIR%examples
+set TOOLS_DIR=%FWDIR%tools
 set BAGEL_DIR=%FWDIR%bagel
 set STREAMING_DIR=%FWDIR%streaming
 set PYSPARK_DIR=%FWDIR%python
@@ -63,6 +64,7 @@ set CLASSPATH=%CLASSPATH%;%CORE_DIR%\target\scala-%SCALA_VERSION%\test-classes;%
 set CLASSPATH=%CLASSPATH%;%STREAMING_DIR%\target\scala-%SCALA_VERSION%\classes;%STREAMING_DIR%\target\scala-%SCALA_VERSION%\test-classes
 set CLASSPATH=%CLASSPATH%;%STREAMING_DIR%\lib\org\apache\kafka\kafka\0.7.2-spark\*
 set CLASSPATH=%CLASSPATH%;%REPL_DIR%\target\scala-%SCALA_VERSION%\classes;%EXAMPLES_DIR%\target\scala-%SCALA_VERSION%\classes
+set CLASSPATH=%CLASSPATH%;%TOOLS_DIR%\target\scala-%SCALA_VERSION%\classes
 set CLASSPATH=%CLASSPATH%;%FWDIR%lib_managed\jars\*
 set CLASSPATH=%CLASSPATH%;%FWDIR%lib_managed\bundles\*
 set CLASSPATH=%CLASSPATH%;%FWDIR%repl\lib\*
