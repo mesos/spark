@@ -97,6 +97,7 @@ export JAVA_OPTS
 CORE_DIR="$FWDIR/core"
 REPL_DIR="$FWDIR/repl"
 EXAMPLES_DIR="$FWDIR/examples"
+TOOLS_DIR="$FWDIR/tools"
 BAGEL_DIR="$FWDIR/bagel"
 STREAMING_DIR="$FWDIR/streaming"
 PYSPARK_DIR="$FWDIR/python"
@@ -119,6 +120,7 @@ fi
 CLASSPATH+=":$CORE_DIR/src/main/resources"
 CLASSPATH+=":$REPL_DIR/target/scala-$SCALA_VERSION/classes"
 CLASSPATH+=":$EXAMPLES_DIR/target/scala-$SCALA_VERSION/classes"
+CLASSPATH+=":$TOOLS_DIR/target/scala-$SCALA_VERSION/classes"
 CLASSPATH+=":$STREAMING_DIR/target/scala-$SCALA_VERSION/classes"
 CLASSPATH+=":$STREAMING_DIR/lib/org/apache/kafka/kafka/0.7.2-spark/*" # <-- our in-project Kafka Jar
 if [ -e "$FWDIR/lib_managed" ]; then

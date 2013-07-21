@@ -17,13 +17,15 @@ object SparkBuild extends Build {
   //val HADOOP_VERSION = "2.0.0-mr1-cdh4.1.1"
   //val HADOOP_MAJOR_VERSION = "2"
 
-  lazy val root = Project("root", file("."), settings = rootSettings) aggregate(core, repl, examples, bagel, streaming)
+  lazy val root = Project("root", file("."), settings = rootSettings) aggregate(core, repl, examples, tools, bagel, streaming)
 
   lazy val core = Project("core", file("core"), settings = coreSettings)
 
   lazy val repl = Project("repl", file("repl"), settings = replSettings) dependsOn (core)
 
   lazy val examples = Project("examples", file("examples"), settings = examplesSettings) dependsOn (core) dependsOn (streaming)
+
+  lazy val tools = Project("tools", file("tools"), settings = examplesSettings) dependsOn (core) dependsOn (streaming)
 
   lazy val bagel = Project("bagel", file("bagel"), settings = bagelSettings) dependsOn (core)
 
@@ -167,6 +169,10 @@ object SparkBuild extends Build {
   def examplesSettings = sharedSettings ++ Seq(
     name := "spark-examples",
     libraryDependencies ++= Seq("com.twitter" % "algebird-core_2.9.2" % "0.1.11")
+  )
+
+  def toolsSettings = sharedSettings ++ Seq(
+    name := "spark-tools"
   )
 
   def bagelSettings = sharedSettings ++ Seq(name := "spark-bagel")
