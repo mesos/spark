@@ -53,9 +53,9 @@ class KryoDeserializationStream(kryo: Kryo, inStream: InputStream) extends Deser
 
 private[spark] class KryoSerializerInstance(ks: KryoSerializer) extends SerializerInstance {
 
-  val kryo = ks.kryo.get()
-  val output = ks.output.get()
-  val input = ks.input.get()
+  val kryo = ks.newKryo()
+  val output = ks.newKryoOutput()
+  val input = ks.newKryoInput()
 
   def serialize[T](t: T): ByteBuffer = {
     output.clear()
@@ -101,19 +101,9 @@ class KryoSerializer extends spark.serializer.Serializer with Logging {
 
   val bufferSize = System.getProperty("spark.kryoserializer.buffer.mb", "2").toInt * 1024 * 1024
 
-  val kryo = new ThreadLocal[Kryo] {
-    override def initialValue = createKryo()
-  }
-
-  val output = new ThreadLocal[KryoOutput] {
-    override def initialValue = new KryoOutput(bufferSize)
-  }
-
-  val input = new ThreadLocal[KryoInput] {
-    override def initialValue = new KryoInput(bufferSize)
-  }
-
-  def createKryo(): Kryo = {
+  def newKryoOutput() = new KryoOutput(bufferSize)
+  def newKryoInput() = new KryoInput(bufferSize)
+  def newKryo(): Kryo = {
     val kryo = new KryoReflectionFactorySupport()
 
     // Register some commonly used classes
@@ -214,7 +204,7 @@ class KryoSerializer extends spark.serializer.Serializer with Logging {
   }
 
   def newInstance(): SerializerInstance = {
-    this.kryo.get().setClassLoader(Thread.currentThread().getContextClassLoader)
+    this.newKryo().setClassLoader(Thread.currentThread().getContextClassLoader)
     new KryoSerializerInstance(this)
   }
 }
