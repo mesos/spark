@@ -4,9 +4,9 @@ import spark.{Utils, SparkContext}
 import BlockManagerMasterActor.BlockStatus
 
 private[spark]
-case class StorageStatus(blockManagerId: BlockManagerId, maxMem: Long, 
+case class StorageStatus(blockManagerId: BlockManagerId, maxMem: Long,
   blocks: Map[String, BlockStatus]) {
-  
+
   def memUsed(blockPrefix: String = "") = {
     blocks.filterKeys(_.startsWith(blockPrefix)).values.map(_.memSize).
       reduceOption(_+_).getOrElse(0l)
@@ -34,18 +34,18 @@ case class RDDInfo(id: Int, name: String, storageLevel: StorageLevel,
 private[spark]
 object StorageUtils {
 
-  /* Given the current storage status of the BlockManager, returns information for each RDD */ 
-  def rddInfoFromStorageStatus(storageStatusList: Array[StorageStatus], 
+  /* Given the current storage status of the BlockManager, returns information for each RDD */
+  def rddInfoFromStorageStatus(storageStatusList: Array[StorageStatus],
     sc: SparkContext) : Array[RDDInfo] = {
-    rddInfoFromBlockStatusList(storageStatusList.flatMap(_.blocks).toMap, sc) 
+    rddInfoFromBlockStatusList(storageStatusList.flatMap(_.blocks).toMap, sc)
   }
 
-  /* Given a list of BlockStatus objets, returns information for each RDD */ 
-  def rddInfoFromBlockStatusList(infos: Map[String, BlockStatus], 
+  /* Given a list of BlockStatus objets, returns information for each RDD */
+  def rddInfoFromBlockStatusList(infos: Map[String, BlockStatus],
     sc: SparkContext) : Array[RDDInfo] = {
 
     // Group by rddId, ignore the partition name
-    val groupedRddBlocks = infos.groupBy { case(k, v) =>
+    val groupedRddBlocks = infos.filterKeys(_.startsWith("rdd_")).groupBy { case(k, v) =>
       k.substring(0,k.lastIndexOf('_'))
     }.mapValues(_.values.toArray)
 
@@ -66,8 +66,8 @@ object StorageUtils {
     }.flatMap(x => x).toArray.sortBy(_.id)
   }
 
-  /* Removes all BlockStatus object that are not part of a block prefix */ 
-  def filterStorageStatusByPrefix(storageStatusList: Array[StorageStatus], 
+  /* Removes all BlockStatus object that are not part of a block prefix */
+  def filterStorageStatusByPrefix(storageStatusList: Array[StorageStatus],
     prefix: String) : Array[StorageStatus] = {
 
     storageStatusList.map { status =>
